@@ -17,7 +17,8 @@ import sys
 from collections.abc import Collection
 from pathlib import Path
 
-from ai_trader.ai.agent import CompletionFn, LLMAgent
+from ai_trader.ai.agent import CompletionFn, DecisionMaker, LLMAgent
+from ai_trader.ai.claude_code import ClaudeCodeAgent, Runner, run_subprocess
 from ai_trader.ai.prompt import render_system_prompt
 from ai_trader.alerts.base import LogAlerter
 from ai_trader.brokers.paper import PaperBroker
@@ -97,6 +98,7 @@ def build_paper_accounts(
     only: Collection[str] | None = None,
     completion_fn: CompletionFn | None = None,
     clock: Clock = utcnow,
+    runner: Runner = run_subprocess,
 ) -> list[TradingAccount]:
     """One paper account per configured LLM (``paper-<name>``). Placeholders are skipped."""
     trading = config.trading
@@ -106,7 +108,7 @@ def build_paper_accounts(
         if only and model.name not in only:
             continue
         if model.is_placeholder:
-            log.warning("Skipping model %r: placeholder ID %r", model.name, model.litellm_model)
+            log.warning("Skipping model %r: placeholder ID %r", model.name, model.model)
             continue
         broker = PaperBroker(
             f"paper-{model.name}",
@@ -118,9 +120,15 @@ def build_paper_accounts(
             quote_currency=trading.quote_currency,
             clock=clock,
         )
-        agent = LLMAgent(
-            model, trading.llm, config.env, system_prompt, trading.pairs[0], completion_fn
-        )
+        agent: DecisionMaker
+        if model.provider == "claude_code":
+            agent = ClaudeCodeAgent(
+                model, trading.llm, config.env, system_prompt, trading.pairs[0], runner
+            )
+        else:
+            agent = LLMAgent(
+                model, trading.llm, config.env, system_prompt, trading.pairs[0], completion_fn
+            )
         accounts.append(TradingAccount(broker=broker, decider=agent))
     return accounts
 
@@ -132,6 +140,7 @@ async def run_once(
     market: MarketData | None = None,
     completion_fn: CompletionFn | None = None,
     clock: Clock = utcnow,
+    runner: Runner = run_subprocess,
 ) -> list[CycleOutcome] | None:
     """Run a single cycle. Returns None if refused (live mode / nothing to run)."""
     if mode is not Mode.PAPER:
@@ -141,7 +150,7 @@ async def run_once(
     repo = Repository.from_url(config.env.database_url)
     market = market or MarketData()
     try:
-        accounts = build_paper_accounts(config, repo, market, only, completion_fn, clock)
+        accounts = build_paper_accounts(config, repo, market, only, completion_fn, clock, runner)
         if not accounts:
             log.error("No runnable models (check names and model IDs in settings.yaml)")
             return None
@@ -186,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             log.warning(
                 "Model %r has placeholder ID %r; set a real model in settings.yaml",
                 model.name,
-                model.litellm_model,
+                model.model,
             )
 
     if args.command == "once":

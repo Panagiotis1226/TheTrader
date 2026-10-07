@@ -289,6 +289,15 @@ class Repository:
                 return None
             return {c.key: getattr(row, c.key) for c in DecisionRow.__table__.columns}
 
+    def count_decisions_since(self, account_id: str, since: datetime) -> int:
+        with self._sessions() as s:
+            count = s.scalar(
+                select(func.count(DecisionRow.id)).where(
+                    DecisionRow.account_id == account_id, DecisionRow.created_at >= since
+                )
+            )
+            return int(count or 0)
+
     def llm_cost_since(self, account_id: str, since: datetime) -> Decimal:
         """Total LLM cost (USD) of this account's decisions since ``since``."""
         with self._sessions() as s:

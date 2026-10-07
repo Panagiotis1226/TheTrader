@@ -378,3 +378,24 @@ Live trading is allowed only if, after **8–12 weeks and at least 50–100 pape
 - **Taxes (Canada/Quebec):** every live disposition is a taxable event for CRA and Revenu Québec. Make sure the `fills` table can export a CSV with date, pair, side, qty, price, fees, and CAD value.
 - **LLM model IDs:** fill in current model identifiers in `settings.yaml`. Don't hardcode them.
 - This system is experimental. Past paper performance does not guarantee live results.
+
+---
+
+## 11. Decisions made during the build
+
+Recorded so later phases (and later sessions) build on what exists, not just the plan above.
+
+- **Python 3.12+** (current numpy dropped 3.11).
+- **Claude only, via the Claude Team seat.** GPT and Gemini were dropped. The default model
+  uses `provider: claude_code` (`claude -p`, locked down to a plain completion, auth via
+  `CLAUDE_CODE_OAUTH_TOKEN`). `provider: litellm` remains available for API models. Phase 4's
+  Docker image must include Node and the Claude Code CLI.
+- **Kill switch keeps stop-losses.** `/stop` halts trading and cancels other open orders, but
+  protective stops stay so open positions remain protected.
+- **Buys are sized in quote currency** (`OrderRequest.quote_amount`), so slippage can't push a
+  fill above the RiskManager's approved amount.
+- **Paper fees: 0.80% taker / 0.40% maker** (conservative; Kraken's tier is unverified).
+- **Daily limits per account:** `max_daily_calls` and `max_daily_cost_usd`.
+- **One proposal per cycle** (single pair), as in §5.2.
+- Interpretations: buy `size_pct` = % of total equity; sells not size-capped; the model may only
+  tighten the stop-loss; trading day = UTC day; equity marked at best bid.

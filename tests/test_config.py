@@ -47,8 +47,14 @@ def test_repo_settings_load() -> None:
     assert s.paper.starting_cash_cad == Decimal("10000")
     assert s.risk.max_trade_pct_of_equity == Decimal("10")
     assert s.benchmarks == ["buy_and_hold", "ma_crossover", "do_nothing"]
-    assert [m.name for m in s.models] == ["claude", "gpt", "gemini"]
-    assert not any(m.is_placeholder for m in s.models)
+    [claude] = s.models
+    assert (claude.name, claude.provider, claude.model) == (
+        "claude",
+        "claude_code",
+        "claude-opus-5-5",
+    )
+    assert not claude.is_placeholder
+    assert s.llm.max_daily_calls == 12
     assert s.llm.max_daily_cost_usd == Decimal("2")
 
 
@@ -85,8 +91,8 @@ def test_placeholder_models_detected() -> None:
     s = TradingSettings.model_validate(
         _with(
             models=[
-                {"name": "a", "litellm_model": "anthropic/<model-id>"},
-                {"name": "b", "litellm_model": "openai/some-real-model"},
+                {"name": "a", "provider": "litellm", "model": "anthropic/<model-id>"},
+                {"name": "b", "provider": "litellm", "model": "openai/some-real-model"},
             ]
         )
     )
@@ -117,18 +123,29 @@ def test_placeholder_models_detected() -> None:
         (_with(llm__timeout_seconds=0), "timeout_seconds"),
         (_with(llm__max_daily_cost_usd=0), "max_daily_cost_usd"),
         ({k: v for k, v in BASE.items() if k != "llm"}, "llm"),
+        (_with(llm__max_daily_calls=0), "max_daily_calls"),
+        (_with(models=[{"name": "x", "provider": "openrouter", "model": "a/b"}]), "provider"),
+        (_with(models=[{"name": "x", "model": "a/b"}]), "provider"),
+        (
+            _with(
+                models=[
+                    {"name": "x", "provider": "claude_code", "model": "opus", "temperature": 0.2}
+                ]
+            ),
+            "not supported with provider claude_code",
+        ),
         (_with(benchmarks=["do_nothing", "do_nothing"]), "benchmarks must be unique"),
         (
             _with(
                 models=[
-                    {"name": "x", "litellm_model": "a/b"},
-                    {"name": "x", "litellm_model": "c/d"},
+                    {"name": "x", "provider": "litellm", "model": "a/b"},
+                    {"name": "x", "provider": "litellm", "model": "c/d"},
                 ]
             ),
             "model names must be unique",
         ),
-        (_with(models=[{"name": "do_nothing", "litellm_model": "a/b"}]), "clash"),
-        (_with(models=[{"name": "Bad Name", "litellm_model": "a/b"}]), "name"),
+        (_with(models=[{"name": "do_nothing", "provider": "litellm", "model": "a/b"}]), "clash"),
+        (_with(models=[{"name": "Bad Name", "provider": "litellm", "model": "a/b"}]), "name"),
     ],
 )
 def test_invalid_settings_rejected(data: dict[str, Any], match: str, tmp_path: Path) -> None:

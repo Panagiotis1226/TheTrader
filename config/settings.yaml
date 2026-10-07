@@ -25,19 +25,18 @@ risk:
   default_stop_loss_pct: 5
 
 llm:
-  timeout_seconds: 90
-  max_tokens: 4000                    # generous: reasoning models count thinking tokens
-  max_daily_cost_usd: 2.00            # per account; the cycle holds once exceeded
+  timeout_seconds: 120
+  max_tokens: 4000                    # litellm only; reasoning models count thinking tokens
+  max_daily_calls: 12                 # per account; 6 scheduled + room for manual runs
+  max_daily_cost_usd: 2.00            # per account (claude_code: API-equivalent estimate)
 
 models:                               # each gets its own paper account (paper-<name>)
-  # Model IDs as of Oct 2026 (GPT/Gemini IDs from third-party sources: verify against
-  # the provider's model list). Optional per-model: temperature, max_tokens, api_base.
-  # Placeholders like "openai/<model-id>" load fine but are never called.
+  # provider claude_code runs `claude -p` on your Claude Team seat (no per-token bill).
+  # Needs the Claude Code CLI installed and CLAUDE_CODE_OAUTH_TOKEN in .env.
+  # provider litellm calls an API directly, e.g. model: "anthropic/claude-opus-5-5"
+  # with ANTHROPIC_API_KEY (optional per-model: temperature, max_tokens, api_base).
   - name: claude
-    litellm_model: "anthropic/claude-opus-5-5"
-  - name: gpt
-    litellm_model: "openai/gpt-6-astra"
-  - name: gemini
-    litellm_model: "gemini/gemini-3.1-pro-preview"
+    provider: claude_code
+    model: "claude-opus-5-5"
 
 benchmarks: [buy_and_hold, ma_crossover, do_nothing]

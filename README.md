@@ -1,7 +1,7 @@
 # TheTrader — AI crypto trading bot (Kraken spot, paper-first)
 
-An LLM (Claude, GPT, Gemini, local models via `litellm`) analyzes market data and **proposes**
-trades on Kraken spot CAD pairs. A deterministic risk layer approves, resizes, or rejects every
+An LLM (Claude, via your Claude Team seat; or any API model via `litellm`) analyzes market
+data and **proposes** trades on Kraken spot CAD pairs. A deterministic risk layer approves, resizes, or rejects every
 proposal. Paper and live trading share one code path; only the broker changes.
 
 The goal is to find out whether an LLM can trade profitably **in paper trading** before any real
@@ -39,8 +39,27 @@ ai-trader once                # one decision cycle per configured model (paper a
 ai-trader once --model claude # just one model
 ```
 
-`ai-trader once` needs the model's API key in `.env`; without it, that account logs a
-`hold` and makes no call. State goes to `DATABASE_URL` (default `data/trader.db`).
+State goes to `DATABASE_URL` (default `data/trader.db`).
+
+## Using Claude through your Claude Team seat
+
+The default model (`provider: claude_code` in `settings.yaml`) runs the Claude Code CLI
+(`claude -p`) on your Team seat, so there is no per-token API bill. Setup:
+
+1. Install Claude Code where the bot runs (`npm install -g @anthropic-ai/claude-code`).
+2. On any machine with a browser, run `claude setup-token` and put the token in `.env` as
+   `CLAUDE_CODE_OAUTH_TOKEN` (valid one year).
+3. `ai-trader once --model claude` to check it works.
+
+Each call is locked down to a plain completion: our system prompt replaces Claude Code's,
+all tools and MCP servers are disabled, user/project settings and hooks are not loaded, and it
+runs in an empty temporary directory. `ANTHROPIC_API_KEY` is removed from the CLI's environment
+so a call can't silently switch to API billing.
+
+Caveats: calls count against your seat's usage limits (shared with normal Claude use); if a
+limit is hit, that cycle holds. Anthropic's docs don't say whether personal automation on a
+subscription is permitted; confirm with Anthropic before relying on it. To use the API
+instead, set `provider: litellm`, `model: "anthropic/claude-opus-5-5"` and `ANTHROPIC_API_KEY`.
 
 `scripts/record_fixtures.py` re-records the Kraken responses in `tests/fixtures/` that the
 unit tests replay. Tests never touch the network.
@@ -78,8 +97,8 @@ order books, run the RiskManager, place the order if approved, alert.
   are tolerated). Prose around it, extra fields, or out-of-range values mean `hold`. There is
   no retry and no attempt to repair the output.
 - **One call, no retries**, with a hard timeout and token cap (`llm:` in `settings.yaml`).
-- **Daily LLM budget** per account (`max_daily_cost_usd`): once spent, the account holds
-  without calling the model.
+- **Daily limits** per account: `max_daily_calls`, and `max_daily_cost_usd` (for Claude Code
+  this is its API-equivalent estimate). Once reached, the account holds without calling.
 - **Buys are sized in CAD.** The broker spends at most the approved amount, so slippage can
   never push a trade past a risk cap.
 - **Everything is logged** per decision: snapshot hash, model, prompt hash, raw response,

@@ -80,6 +80,9 @@ class EnvSettings(BaseSettings):
     openai_api_key: SecretStr | None = None
     gemini_api_key: SecretStr | None = None
     telegram_bot_token: SecretStr | None = None
+    # From `claude setup-token`: lets `claude -p` use a Claude subscription seat.
+    claude_code_oauth_token: SecretStr | None = None
+    claude_bin: str = "claude"  # path to the Claude Code CLI
 
     telegram_chat_id: str | None = None
     healthcheck_url: SecretStr | None = None  # the ping URL embeds a secret UUID
@@ -103,6 +106,7 @@ class EnvSettings(BaseSettings):
         "openai_api_key",
         "gemini_api_key",
         "telegram_bot_token",
+        "claude_code_oauth_token",
         "telegram_chat_id",
         "healthcheck_url",
         mode="before",
@@ -154,23 +158,37 @@ class RiskSettings(_StrictModel):
 
 class LLMSettings(_StrictModel):
     timeout_seconds: Annotated[int, Field(ge=1, le=600)]
-    max_tokens: Annotated[int, Field(ge=16)]  # includes reasoning tokens on some providers
-    max_daily_cost_usd: Annotated[Decimal, Field(gt=0)]  # per account; cycles hold beyond it
+    max_tokens: Annotated[int, Field(ge=16)]  # litellm only; includes reasoning tokens
+    max_daily_calls: Annotated[int, Field(ge=1)]  # per account; cycles hold beyond it
+    # Per account; cycles hold beyond it. For claude_code this is Claude Code's
+    # API-equivalent estimate (the subscription isn't billed per token).
+    max_daily_cost_usd: Annotated[Decimal, Field(gt=0)]
 
 
 class ModelSettings(_StrictModel):
     name: Annotated[str, Field(pattern=_ACCOUNT_NAME_RE, max_length=32)]
-    litellm_model: Annotated[str, Field(min_length=1)]
-    # Optional per-model overrides. Leave temperature unset for reasoning models that
-    # reject it.
+    # claude_code: `claude -p` on a Claude subscription; litellm: any API provider.
+    provider: Literal["claude_code", "litellm"]
+    # claude_code: a Claude model name or alias (e.g. claude-opus-5-5, opus).
+    # litellm: provider/model (e.g. anthropic/claude-opus-5-5).
+    model: Annotated[str, Field(min_length=1)]
+    # Optional litellm-only overrides. Leave temperature unset for reasoning models.
     temperature: Annotated[float, Field(ge=0, le=2)] | None = None
     max_tokens: Annotated[int, Field(ge=16)] | None = None
     api_base: str | None = None  # e.g. a local Ollama server
 
     @property
     def is_placeholder(self) -> bool:
-        """True while the model ID is still a template like ``anthropic/<model-id>``."""
-        return "<" in self.litellm_model or ">" in self.litellm_model
+        """True while the model ID is still a template like ``<model-id>``."""
+        return "<" in self.model or ">" in self.model
+
+    @model_validator(mode="after")
+    def _litellm_only_options(self) -> ModelSettings:
+        if self.provider == "claude_code":
+            extras = [f for f in ("temperature", "max_tokens", "api_base") if getattr(self, f)]
+            if extras:
+                raise ValueError(f"{extras} are not supported with provider claude_code")
+        return self
 
 
 class TradingSettings(_StrictModel):

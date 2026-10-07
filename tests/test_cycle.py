@@ -75,7 +75,7 @@ class Harness:
     def account(self, name: str, response) -> TradingAccount:
         completion = mock_llm(response)
         agent = LLMAgent(
-            ModelSettings(name=name, litellm_model="anthropic/claude-opus-5-5"),
+            ModelSettings(name=name, provider="litellm", model="anthropic/claude-opus-5-5"),
             SETTINGS.llm,
             self.env,
             render_system_prompt(SETTINGS),
@@ -265,23 +265,31 @@ async def test_stop_loss_checked_at_cycle_start(h) -> None:
 # ----------------------------------------------------------------- one-off command
 
 
-async def test_run_once_one_cycle_per_model(tmp_path, write_env) -> None:
-    env_file = write_env(
-        ANTHROPIC_API_KEY=SECRET,
-        OPENAI_API_KEY=SECRET,
-        GEMINI_API_KEY=SECRET,
-        DATABASE_URL=f"sqlite:///{tmp_path}/t.db",
-    )
+async def test_run_once_runs_each_configured_model(tmp_path, write_env) -> None:
+    from .test_claude_code import FakeRunner, cli_output
+
+    env_file = write_env(CLAUDE_CODE_OAUTH_TOKEN="tok", DATABASE_URL=f"sqlite:///{tmp_path}/t.db")
     config = load_config(env_file, SETTINGS_PATH)
     clock = FakeClock(NOW)
     market = MarketData(FakeExchange(), clock=clock)
-    completion = mock_llm(proposal_json(action="hold", size_pct=0))
+    runner = FakeRunner(cli_output(proposal_json(size_pct=5)))
 
-    outcomes = await run_once(config, Mode.PAPER, None, market, completion, clock)
+    outcomes = await run_once(config, Mode.PAPER, None, market, None, clock, runner)
     assert outcomes is not None
-    assert {o.account_id for o in outcomes} == {"paper-claude", "paper-gpt", "paper-gemini"}
-    assert len(completion.calls) == 3
-    assert all(o.status is CycleStatus.HELD for o in outcomes)
+    [outcome] = outcomes  # settings.yaml: one model, provider claude_code
+    assert outcome.account_id == "paper-claude"
+    assert outcome.status is CycleStatus.TRADED
+    assert len(runner.calls) == 1
+
+
+async def test_daily_call_limit_skips(h) -> None:
+    acct = h.account("claude", proposal_json())
+    for i in range(SETTINGS.llm.max_daily_calls):
+        h.repo.record_decision("paper-claude", NOW - timedelta(minutes=i + 1))
+    [outcome] = await h.cycle.run([acct])
+    assert outcome.status is CycleStatus.SKIPPED
+    assert "call limit" in outcome.detail
+    assert acct.decider.calls == []
 
 
 def test_once_refuses_live_mode(write_env) -> None:

@@ -127,7 +127,7 @@ class LLMAgent:
         fallback_pair: str,
         completion_fn: CompletionFn | None = None,
     ) -> None:
-        self.name = model.litellm_model
+        self.name = model.model
         self._model = model
         self._llm = llm
         self._env = env
@@ -148,7 +148,7 @@ class LLMAgent:
 
     def _api_key(self) -> tuple[str | None, str | None]:
         """(key, error). Error is set when a required key is missing."""
-        provider = self._model.litellm_model.split("/", 1)[0]
+        provider = self._model.model.split("/", 1)[0]
         attr = _PROVIDER_KEYS.get(provider)
         if attr is None:
             return None, None
@@ -159,13 +159,13 @@ class LLMAgent:
 
     async def decide(self, snapshot: MarketSnapshot) -> AgentResult:
         if self._model.is_placeholder:
-            return self._hold(f"model ID {self._model.litellm_model!r} is a placeholder")
+            return self._hold(f"model ID {self._model.model!r} is a placeholder")
         api_key, key_error = self._api_key()
         if key_error:
             return self._hold(key_error)
 
         kwargs: dict[str, Any] = {
-            "model": self._model.litellm_model,
+            "model": self._model.model,
             "messages": [
                 {"role": "system", "content": self._system_prompt},
                 {"role": "user", "content": render_user_prompt(snapshot)},

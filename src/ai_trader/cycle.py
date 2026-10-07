@@ -5,8 +5,8 @@ Order of operations for a run over several accounts:
 1. Check every account's stop-losses (so snapshots see post-stop positions).
 2. Fetch market data once for all whitelisted pairs. Stale or missing data skips
    the whole cycle.
-3. Per account, concurrently: skip if halted or over the daily LLM budget (no LLM
-   call), build the snapshot, ask the decision maker, re-fetch order books (the LLM
+3. Per account, concurrently: skip if halted or over the daily call or cost limit (no
+   LLM call), build the snapshot, ask the decision maker, re-fetch order books (the LLM
    may have taken a while), evaluate risk, place the order if approved.
 
 Every decision is logged with the snapshot hash, model, prompt hash, raw response,
@@ -156,7 +156,15 @@ class DecisionCycle:
             kinds = ", ".join(sorted({h.kind.value for h in halts}))
             return CycleOutcome(acct, CycleStatus.SKIPPED, f"halted ({kinds})")
 
-        spent = self._repo.llm_cost_since(acct, utc_day_start(now))
+        day_start = utc_day_start(now)
+        calls = self._repo.count_decisions_since(acct, day_start)
+        if calls >= self._settings.llm.max_daily_calls:
+            await self._alerter.send(
+                f"{acct}: daily call limit reached ({calls}); holding", AlertLevel.WARNING
+            )
+            return CycleOutcome(acct, CycleStatus.SKIPPED, "daily call limit reached")
+
+        spent = self._repo.llm_cost_since(acct, day_start)
         budget = self._settings.llm.max_daily_cost_usd
         if spent >= budget:
             await self._alerter.send(

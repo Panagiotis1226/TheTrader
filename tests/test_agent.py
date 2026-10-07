@@ -40,7 +40,7 @@ SNAPSHOT = MarketSnapshot(
 def agent(completion, model="anthropic/claude-opus-5-5", write_env=None, **model_kw):
     env = load_env(write_env(ANTHROPIC_API_KEY=SECRET)) if write_env else load_env(None)
     return LLMAgent(
-        ModelSettings(name="m", litellm_model=model, **model_kw),
+        ModelSettings(name="m", provider="litellm", model=model, **model_kw),
         SETTINGS.llm,
         env,
         render_system_prompt(SETTINGS),

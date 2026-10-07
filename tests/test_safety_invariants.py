@@ -48,6 +48,7 @@ def test_env_example_has_no_values_for_secrets() -> None:
         "OPENAI_API_KEY",
         "GEMINI_API_KEY",
         "TELEGRAM_BOT_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
     }
     for line in (REPO_ROOT / ".env.example").read_text(encoding="utf-8").splitlines():
         key, sep, value = line.partition("=")
