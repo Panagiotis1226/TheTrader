@@ -76,3 +76,47 @@ def test_decision_round_trip(repo) -> None:
 def test_sqlite_parent_dir_created(tmp_path) -> None:
     Repository.from_url(f"sqlite:///{tmp_path / 'nested' / 'dir' / 'x.db'}")
     assert (tmp_path / "nested" / "dir" / "x.db").exists()
+
+
+def test_sqlite_uses_rollback_journal_and_waits_for_locks(tmp_path) -> None:
+    from sqlalchemy import text
+
+    repo = Repository.from_url(f"sqlite:///{tmp_path / 'j.db'}")
+    with repo._engine.connect() as conn:
+        assert conn.execute(text("PRAGMA journal_mode")).scalar() == "delete"
+        assert conn.execute(text("PRAGMA busy_timeout")).scalar() == 10_000
+        assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1
+    assert not (tmp_path / "j.db-wal").exists()
+
+
+def test_bot_dashboard_and_cli_share_the_database(tmp_path) -> None:
+    """Separate processes each open their own engine on the same file."""
+    import threading
+
+    url = f"sqlite:///{tmp_path / 'shared.db'}"
+    writer, reader = Repository.from_url(url), Repository.from_url(url)
+    _account(writer)
+    errors: list[Exception] = []
+
+    def write() -> None:
+        try:
+            for i in range(200):
+                writer.record_equity("a", T + timedelta(minutes=i), D(i), D(0))
+        except Exception as exc:  # pragma: no cover - the assertion reports it
+            errors.append(exc)
+
+    def read() -> None:
+        try:
+            for _ in range(200):
+                reader.equity_series("a")
+                reader.add_alert("info", "dashboard/CLI write", T)
+        except Exception as exc:  # pragma: no cover
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write), threading.Thread(target=read)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(reader.equity_series("a")) == 200

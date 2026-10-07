@@ -70,6 +70,25 @@ class DecisionRecord:
     fill_price: Decimal | None
 
 
+SQLITE_BUSY_TIMEOUT_MS = 10_000
+
+
+def configure_sqlite(dbapi_conn: Any) -> None:
+    """Per-connection SQLite settings.
+
+    Rollback journal (``DELETE``), not WAL: WAL needs shared memory on the database's
+    filesystem, which Docker Desktop's folder sharing (Mac/Windows) doesn't provide, and
+    SQLite then fails with "disk I/O error". The bot, dashboard and CLI share the file;
+    with this little write traffic, waiting up to ``SQLITE_BUSY_TIMEOUT_MS`` for a lock is
+    plenty.
+    """
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA foreign_keys=ON")
+    cur.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    cur.execute("PRAGMA journal_mode=DELETE")
+    cur.close()
+
+
 def make_engine(database_url: str) -> Engine:
     url = make_url(database_url)
     if url.get_backend_name() == "sqlite" and url.database not in (None, "", ":memory:"):
@@ -79,10 +98,7 @@ def make_engine(database_url: str) -> Engine:
 
         @event.listens_for(engine, "connect")
         def _sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
-            cur = dbapi_conn.cursor()
-            cur.execute("PRAGMA foreign_keys=ON")
-            cur.execute("PRAGMA journal_mode=WAL")
-            cur.close()
+            configure_sqlite(dbapi_conn)
 
     return engine
 

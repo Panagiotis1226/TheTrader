@@ -110,3 +110,17 @@ rejections, alerts and LLM cost. It is read-only; use the commands above to act.
 - **healthchecks.io** (`HEALTHCHECK_URL`): an email if the bot stops running.
 
 Without them, nothing is lost: alerts are kept in the database and the log.
+
+## 9. Troubleshooting
+
+- **`disk I/O error` from SQLite at startup** (Docker Desktop on Mac/Windows, versions before
+  this fix): stop the bot, delete the database files, update, and start again:
+  ```bash
+  docker compose down
+  rm -f data/trader.db data/trader.db-wal data/trader.db-shm      # Windows: del data\trader.db*
+  git pull && docker compose up -d --build
+  ```
+- **`Not logged in` in `status`**: the token in `.env` is missing or mistyped
+  (`CLAUDE_CODE_OAUTH_TOKEN=...` on one line, no quotes). After fixing `.env`, run
+  `docker compose up -d` again so the bot picks it up.
+- **The bot keeps restarting**: `docker compose logs --tail 50 bot` shows why.
