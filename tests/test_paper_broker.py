@@ -280,14 +280,20 @@ async def test_stop_stays_open_during_outage(repo, market, clock) -> None:
     assert len(await broker.get_open_orders()) == 1
 
 
-async def test_cancel_all_cancels_open_orders(repo, market, clock) -> None:
+async def test_cancel_all_keeps_stop_losses_by_default(repo, market, clock) -> None:
     broker = make_broker(repo, market, clock)
     await broker.place_order(buy("0.01", stop="5"))
     await broker.place_order(buy("0.01", pair="ETH/CAD", stop="5"))
-    assert len(await broker.get_open_orders()) == 2
     await broker.cancel_all()
-    assert await broker.get_open_orders() == []
+    assert len(await broker.get_open_orders()) == 2
     assert len(await broker.get_positions()) == 2  # positions untouched
+
+
+async def test_cancel_all_can_include_stop_losses(repo, market, clock) -> None:
+    broker = make_broker(repo, market, clock)
+    await broker.place_order(buy("0.01", stop="5"))
+    await broker.cancel_all(keep_stop_losses=False)
+    assert await broker.get_open_orders() == []
 
 
 # --------------------------------------------------------------- persistence/accounts
@@ -311,7 +317,7 @@ async def test_accounts_are_independent(repo, market, clock) -> None:
     await a.place_order(buy("0.01", stop="5"))
     assert (await b.get_balances()) == {"CAD": D("500")}
     assert await b.get_open_orders() == []
-    await b.cancel_all()
+    await b.cancel_all(keep_stop_losses=False)
     assert len(await a.get_open_orders()) == 1
 
 

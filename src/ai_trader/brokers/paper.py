@@ -156,10 +156,14 @@ class PaperBroker:
         async with self._lock:
             return await self._execute_market(order, order_type=OrderType.MARKET)
 
-    async def cancel_all(self) -> None:
-        """Kill switch: cancel every open order for this account."""
+    async def cancel_all(self, *, keep_stop_losses: bool = True) -> None:
+        """Cancel open orders. Protective stop-losses stay unless explicitly included."""
         async with self._lock:
-            ids = [o.id for o in self._repo.open_orders(self.account_id)]
+            ids = [
+                o.id
+                for o in self._repo.open_orders(self.account_id)
+                if not (keep_stop_losses and o.type is OrderType.STOP_LOSS)
+            ]
             self._repo.set_order_status(ids, OrderStatus.CANCELLED, self._clock(), "cancel_all")
             if ids:
                 log.warning("%s: cancelled %d open order(s)", self.account_id, len(ids))
