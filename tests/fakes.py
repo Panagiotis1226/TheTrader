@@ -111,3 +111,33 @@ class FakeBookSource:
         if pair not in self.infos:
             raise MarketDataError(f"{pair} unknown")
         return self.infos[pair]
+
+
+class RecordingAlerter:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    async def send(self, text: str, level="info") -> None:
+        self.sent.append((str(level), text))
+
+    def texts(self, level: str | None = None) -> list[str]:
+        return [t for lv, t in self.sent if level is None or lv == level]
+
+
+def mock_llm(response: object):
+    """A completion function that runs real litellm with ``mock_response`` (no network).
+
+    ``response`` may be text, an exception instance, or a callable(messages) -> text.
+    ``calls`` records the kwargs of every call.
+    """
+    import litellm
+
+    calls: list[dict] = []
+
+    async def complete(**kwargs):
+        calls.append(kwargs)
+        mock = response(kwargs["messages"]) if callable(response) else response
+        return await litellm.acompletion(**kwargs, mock_response=mock)
+
+    complete.calls = calls  # type: ignore[attr-defined]
+    return complete

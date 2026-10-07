@@ -7,8 +7,8 @@ proposal. Paper and live trading share one code path; only the broker changes.
 The goal is to find out whether an LLM can trade profitably **in paper trading** before any real
 money is used. See [`PLAN.md`](PLAN.md) for the full design and phase plan.
 
-> **Status:** Phase 1 done — market data, indicators, snapshots, PaperBroker, RiskManager,
-> storage. No LLM and no trading loop yet.
+> **Status:** Phase 2 done — LLM agents and the decision cycle run on demand
+> (`ai-trader once`). No scheduler yet (Phase 4).
 
 ## Safety
 
@@ -35,7 +35,12 @@ cp .env.example .env          # leave MODE=paper
 pytest && ruff check . && ruff format --check .
 ai-trader                     # validates config, runs the mode guard, exits
 python scripts/print_snapshot.py BTC/CAD   # live MarketSnapshot from Kraken public data
+ai-trader once                # one decision cycle per configured model (paper accounts)
+ai-trader once --model claude # just one model
 ```
+
+`ai-trader once` needs the model's API key in `.env`; without it, that account logs a
+`hold` and makes no call. State goes to `DATABASE_URL` (default `data/trader.db`).
 
 `scripts/record_fixtures.py` re-records the Kraken responses in `tests/fixtures/` that the
 unit tests replay. Tests never touch the network.
@@ -62,6 +67,27 @@ Before trading, verify the Kraken Pro fees for your volume tier and fill in real
   trigger as market sells when the best bid reaches the trigger.
 - **Equity** marks positions at the best bid.
 - **State** is rebuilt from the fill log on restart, so balances can't drift from fills.
+
+## How a decision is made
+
+Each cycle: check stop-losses → fetch market data once → for each account (in parallel):
+skip if halted or over its daily LLM budget, build the snapshot, ask the model, re-fetch the
+order books, run the RiskManager, place the order if approved, alert.
+
+- **One JSON object or nothing.** The reply must be exactly one JSON object (markdown fences
+  are tolerated). Prose around it, extra fields, or out-of-range values mean `hold`. There is
+  no retry and no attempt to repair the output.
+- **One call, no retries**, with a hard timeout and token cap (`llm:` in `settings.yaml`).
+- **Daily LLM budget** per account (`max_daily_cost_usd`): once spent, the account holds
+  without calling the model.
+- **Buys are sized in CAD.** The broker spends at most the approved amount, so slippage can
+  never push a trade past a risk cap.
+- **Everything is logged** per decision: snapshot hash, model, prompt hash, raw response,
+  parsed proposal, risk outcome and reason, tokens, latency, cost, and the order ID (fill
+  details are in `fills`). The prompt hash changes whenever the prompt template or any
+  risk/fee setting changes — useful for keeping the Phase 5 evaluation honest.
+- **Kill switch** (`risk/killswitch.py`, wired to Telegram `/stop` in Phase 4) halts all
+  trading and cancels open orders but keeps stop-losses, so open positions stay protected.
 
 ## Risk rules
 

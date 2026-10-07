@@ -281,6 +281,26 @@ class Repository:
         with self._sessions.begin() as s:
             s.execute(update(DecisionRow).where(DecisionRow.id == decision_id).values(**fields))
 
+    def decision_details(self, decision_id: int) -> dict[str, Any] | None:
+        """Every logged column of one decision (for audits and the dashboard)."""
+        with self._sessions() as s:
+            row = s.get(DecisionRow, decision_id)
+            if row is None:
+                return None
+            return {c.key: getattr(row, c.key) for c in DecisionRow.__table__.columns}
+
+    def llm_cost_since(self, account_id: str, since: datetime) -> Decimal:
+        """Total LLM cost (USD) of this account's decisions since ``since``."""
+        with self._sessions() as s:
+            costs = s.scalars(
+                select(DecisionRow.cost_usd).where(
+                    DecisionRow.account_id == account_id,
+                    DecisionRow.created_at >= since,
+                    DecisionRow.cost_usd.is_not(None),
+                )
+            )
+            return sum(costs, Decimal(0))
+
     def recent_decisions(self, account_id: str, limit: int = 5) -> list[DecisionRecord]:
         """Most recent first, with the average fill price when the decision traded."""
         with self._sessions() as s:

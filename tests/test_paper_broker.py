@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from ai_trader.brokers.base import OrderRequest, OrderStatus, OrderType, Side
-from ai_trader.brokers.paper import PaperBroker, walk_book
+from ai_trader.brokers.paper import PaperBroker, amount_for_cost, walk_book
 from ai_trader.data.market import BookLevel
 from ai_trader.storage.repo import Repository
 
@@ -195,6 +195,56 @@ def test_order_request_validation() -> None:
         OrderRequest(pair="BTC/CAD", side=Side.BUY, amount=D(0))
     with pytest.raises(ValueError):
         OrderRequest(pair="BTC/CAD", side=Side.BUY, amount=D(1), stop_loss_pct=D(100))
+    with pytest.raises(ValueError, match="exactly one"):
+        OrderRequest(pair="BTC/CAD", side=Side.BUY)
+    with pytest.raises(ValueError, match="exactly one"):
+        OrderRequest(pair="BTC/CAD", side=Side.BUY, amount=D(1), quote_amount=D(1))
+    with pytest.raises(ValueError, match="only valid for buys"):
+        OrderRequest(pair="BTC/CAD", side=Side.SELL, quote_amount=D(100))
+
+
+# --------------------------------------------------------------- buy by quote amount
+
+
+def test_amount_for_cost() -> None:
+    levels = [BookLevel(D("10"), D("1")), BookLevel(D("20"), D("2"))]
+    assert amount_for_cost(levels, D("30")) == (D("2"), False)  # 1 @ 10 + 1 @ 20
+    assert amount_for_cost(levels, D("5")) == (D("0.5"), False)
+    assert amount_for_cost(levels, D("100")) == (D("3"), True)
+
+
+async def test_quote_buy_never_spends_more_than_approved(repo, market, clock) -> None:
+    broker = make_broker(repo, market, clock)
+    result = await broker.place_order(
+        OrderRequest(pair="BTC/CAD", side=Side.BUY, quote_amount=D("2501.5"))
+    )
+    assert result.status is OrderStatus.FILLED
+    assert result.filled_amount == D("0.025")  # 0.01 @ 100000 + 0.015 @ 100100
+    assert result.cost == D("2501.5")
+    odd = await broker.place_order(
+        OrderRequest(pair="BTC/CAD", side=Side.BUY, quote_amount=D("777.77"))
+    )
+    assert odd.cost <= D("777.77")
+    assert D("777.77") - odd.cost < D("0.01")  # only the rounding-down remainder is unspent
+
+
+async def test_quote_buy_of_all_cash_fits_with_fee(repo, market, clock) -> None:
+    broker = make_broker(repo, market, clock, cash="1004")
+    spend = D("1004") / D("1.004")  # what the RiskManager approves for "all cash"
+    result = await broker.place_order(
+        OrderRequest(pair="BTC/CAD", side=Side.BUY, quote_amount=spend)
+    )
+    assert result.status is OrderStatus.FILLED
+    assert broker.cash >= 0
+
+
+async def test_quote_buy_thin_book_rejected(repo, market, clock) -> None:
+    broker = make_broker(repo, market, clock, cash="10000000")
+    result = await broker.place_order(
+        OrderRequest(pair="BTC/CAD", side=Side.BUY, quote_amount=D("5000000"))
+    )
+    assert result.status is OrderStatus.REJECTED
+    assert "too thin" in result.reason
 
 
 # ----------------------------------------------------------------------- stop-losses

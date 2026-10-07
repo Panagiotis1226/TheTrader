@@ -45,7 +45,7 @@ class AccountState:
     cash: Decimal
     position_amounts: Mapping[str, Decimal]  # base quantity per pair
     position_values: Mapping[str, Decimal]  # quote value per pair (marked at best bid)
-    buy_prices: Mapping[str, Decimal]  # current best ask per pair, used to size buys
+    buy_prices: Mapping[str, Decimal]  # current best ask per pair (buys need a market)
     day_start_equity: Decimal
     peak_equity: Decimal
     trades_today: int
@@ -200,7 +200,7 @@ class RiskManager:
         order = OrderRequest(
             pair=proposal.pair,
             side=Side.BUY,
-            amount=approved / price,
+            quote_amount=approved,  # spend at most this; slippage reduces the amount bought
             stop_loss_pct=stop_pct,
             decision_id=decision_id,
         )

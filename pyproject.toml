@@ -40,6 +40,10 @@ packages = ["src/ai_trader"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
+filterwarnings = [
+    # litellm internals; not our code
+    "ignore:Item 'summary' on TypedDict class 'ChatCompletionReasoningItem':UserWarning",
+]
 
 [tool.ruff]
 line-length = 100

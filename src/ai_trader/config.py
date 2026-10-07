@@ -152,9 +152,20 @@ class RiskSettings(_StrictModel):
         return self
 
 
+class LLMSettings(_StrictModel):
+    timeout_seconds: Annotated[int, Field(ge=1, le=600)]
+    max_tokens: Annotated[int, Field(ge=16)]  # includes reasoning tokens on some providers
+    max_daily_cost_usd: Annotated[Decimal, Field(gt=0)]  # per account; cycles hold beyond it
+
+
 class ModelSettings(_StrictModel):
     name: Annotated[str, Field(pattern=_ACCOUNT_NAME_RE, max_length=32)]
     litellm_model: Annotated[str, Field(min_length=1)]
+    # Optional per-model overrides. Leave temperature unset for reasoning models that
+    # reject it.
+    temperature: Annotated[float, Field(ge=0, le=2)] | None = None
+    max_tokens: Annotated[int, Field(ge=16)] | None = None
+    api_base: str | None = None  # e.g. a local Ollama server
 
     @property
     def is_placeholder(self) -> bool:
@@ -169,6 +180,7 @@ class TradingSettings(_StrictModel):
     max_data_age_seconds: Annotated[int, Field(ge=1)]
     paper: PaperSettings
     risk: RiskSettings
+    llm: LLMSettings
     models: list[ModelSettings] = Field(default_factory=list)
     benchmarks: list[BenchmarkName] = Field(default_factory=list)
 

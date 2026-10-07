@@ -88,7 +88,7 @@ def test_buy_within_limits_approved(rm) -> None:
     assert d.outcome is RiskOutcome.APPROVE
     assert d.approved_notional == D(500)
     assert d.order == OrderRequest(
-        pair="BTC/CAD", side=Side.BUY, amount=D("0.005"), stop_loss_pct=D(5), decision_id=42
+        pair="BTC/CAD", side=Side.BUY, quote_amount=D(500), stop_loss_pct=D(5), decision_id=42
     )
     assert d.tradable
 
@@ -106,7 +106,7 @@ def test_resize_to_max_trade_pct(rm) -> None:
     assert d.requested_notional == D(2000)
     assert d.approved_notional == D(1000)
     assert "max_trade_pct_of_equity" in d.reason
-    assert d.order.amount == D("0.01")
+    assert d.order.quote_amount == D(1000)
 
 
 def test_resize_to_max_position_per_pair(rm) -> None:

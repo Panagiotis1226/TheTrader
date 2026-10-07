@@ -31,17 +31,28 @@ class OrderStatus(StrEnum):
 
 @dataclass(frozen=True)
 class OrderRequest:
-    """A market order approved by the RiskManager."""
+    """A market order approved by the RiskManager.
+
+    Give exactly one of ``amount`` (base quantity) or ``quote_amount`` (quote currency to
+    spend, buys only, before fees). Risk-sized buys use ``quote_amount`` so slippage can
+    never push the cost above what the RiskManager approved.
+    """
 
     pair: str
     side: Side
-    amount: Decimal  # base-currency quantity; the broker rounds down to the exchange step
+    amount: Decimal | None = None  # base quantity; the broker rounds down to the step
     stop_loss_pct: Decimal | None = None  # buys only: protective stop this % below avg entry
     decision_id: int | None = None
+    quote_amount: Decimal | None = None
 
     def __post_init__(self) -> None:
-        if self.amount <= 0:
-            raise ValueError("order amount must be positive")
+        if (self.amount is None) == (self.quote_amount is None):
+            raise ValueError("give exactly one of amount or quote_amount")
+        size = self.amount if self.amount is not None else self.quote_amount
+        if size is None or size <= 0:
+            raise ValueError("order size must be positive")
+        if self.quote_amount is not None and self.side is not Side.BUY:
+            raise ValueError("quote_amount is only valid for buys")
         if self.stop_loss_pct is not None and not 0 < self.stop_loss_pct < 100:
             raise ValueError("stop_loss_pct must be between 0 and 100")
 

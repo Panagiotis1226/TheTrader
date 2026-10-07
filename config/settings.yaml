@@ -24,14 +24,20 @@ risk:
   max_trades_per_day: 6
   default_stop_loss_pct: 5
 
-models:                               # each gets its own paper account
-  # Fill in current model IDs before Phase 2. Placeholders ("<model-id>") are
-  # loaded fine but will be refused when the agent tries to call them.
+llm:
+  timeout_seconds: 90
+  max_tokens: 4000                    # generous: reasoning models count thinking tokens
+  max_daily_cost_usd: 2.00            # per account; the cycle holds once exceeded
+
+models:                               # each gets its own paper account (paper-<name>)
+  # Model IDs as of Oct 2026 (GPT/Gemini IDs from third-party sources: verify against
+  # the provider's model list). Optional per-model: temperature, max_tokens, api_base.
+  # Placeholders like "openai/<model-id>" load fine but are never called.
   - name: claude
-    litellm_model: "anthropic/<model-id>"
+    litellm_model: "anthropic/claude-opus-5-5"
   - name: gpt
-    litellm_model: "openai/<model-id>"
+    litellm_model: "openai/gpt-6-astra"
   - name: gemini
-    litellm_model: "gemini/<model-id>"
+    litellm_model: "gemini/gemini-3.1-pro-preview"
 
 benchmarks: [buy_and_hold, ma_crossover, do_nothing]

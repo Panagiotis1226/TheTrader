@@ -63,6 +63,19 @@ def walk_book(levels: Sequence[BookLevel], amount: Decimal) -> BookWalk:
     return BookWalk(filled=amount - remaining, cost=cost)
 
 
+def amount_for_cost(levels: Sequence[BookLevel], quote: Decimal) -> tuple[Decimal, bool]:
+    """Base amount that ``quote`` buys walking ``levels``; flag is True if the book ran out."""
+    remaining = quote
+    amount = Decimal(0)
+    for level in levels:
+        level_cost = level.price * level.amount
+        if level_cost >= remaining:
+            return amount + remaining / level.price, False
+        amount += level.amount
+        remaining -= level_cost
+    return amount, True
+
+
 @dataclass
 class _PositionState:
     amount: Decimal = Decimal(0)
@@ -258,16 +271,28 @@ class PaperBroker:
     async def _execute_market(
         self, request: OrderRequest, *, order_type: OrderType, existing: Order | None = None
     ) -> OrderResult:
-        order = existing or self._new_order(request, order_type, request.amount)
+        order = existing or self._new_order(request, order_type, request.amount or Decimal(0))
 
         if request.pair not in self._allowed_pairs:
             return self._reject(order, f"{request.pair} is not a whitelisted pair")
         try:
             info = await self._market.market_info(request.pair)
+            book = await self._market.fetch_order_book(request.pair)
         except MarketDataError as exc:
-            return self._reject(order, f"market info unavailable: {exc}", transient=True)
+            return self._reject(order, f"market data unavailable: {exc}", transient=True)
+        levels = book.asks if request.side is Side.BUY else book.bids
 
-        amount = info.round_amount(request.amount)
+        if request.quote_amount is not None:
+            raw_amount, exhausted = amount_for_cost(levels, request.quote_amount)
+            if exhausted:
+                return self._reject(
+                    order, f"order book too thin for {request.quote_amount}", transient=True
+                )
+        else:
+            assert request.amount is not None
+            raw_amount = request.amount
+
+        amount = info.round_amount(raw_amount)
         order = replace(order, amount=amount)
         if amount <= 0 or (info.min_amount is not None and amount < info.min_amount):
             return self._reject(order, f"amount {amount} below Kraken minimum {info.min_amount}")
@@ -278,11 +303,6 @@ class PaperBroker:
                 f"need {amount}",
             )
 
-        try:
-            book = await self._market.fetch_order_book(request.pair)
-        except MarketDataError as exc:
-            return self._reject(order, f"order book unavailable: {exc}", transient=True)
-        levels = book.asks if request.side is Side.BUY else book.bids
         walk = walk_book(levels, amount)
         if walk.filled < amount:
             return self._reject(

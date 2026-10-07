@@ -48,6 +48,8 @@ def test_repo_settings_load() -> None:
     assert s.risk.max_trade_pct_of_equity == Decimal("10")
     assert s.benchmarks == ["buy_and_hold", "ma_crossover", "do_nothing"]
     assert [m.name for m in s.models] == ["claude", "gpt", "gemini"]
+    assert not any(m.is_placeholder for m in s.models)
+    assert s.llm.max_daily_cost_usd == Decimal("2")
 
 
 def test_yaml_floats_become_exact_decimals() -> None:
@@ -112,6 +114,9 @@ def test_placeholder_models_detected() -> None:
         (_with(paper__starting_cash_cad=0), "starting_cash_cad"),
         (_with(decision_interval_minutes=0), "decision_interval_minutes"),
         (_with(benchmarks=["buy_the_dip"]), "benchmarks"),
+        (_with(llm__timeout_seconds=0), "timeout_seconds"),
+        (_with(llm__max_daily_cost_usd=0), "max_daily_cost_usd"),
+        ({k: v for k, v in BASE.items() if k != "llm"}, "llm"),
         (_with(benchmarks=["do_nothing", "do_nothing"]), "benchmarks must be unique"),
         (
             _with(

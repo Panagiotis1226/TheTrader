@@ -76,6 +76,7 @@ class DecisionRow(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     snapshot_hash: Mapped[str | None] = mapped_column(String(64))
     model: Mapped[str | None] = mapped_column(String(128))  # litellm model or strategy name
+    prompt_hash: Mapped[str | None] = mapped_column(String(16))  # detects prompt changes
     raw_response: Mapped[str | None] = mapped_column(Text)
     proposal: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     action: Mapped[str | None] = mapped_column(String(8))
