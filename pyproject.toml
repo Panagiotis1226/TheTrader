@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ai-trader"
+version = "0.1.0"
+description = "LLM-driven crypto trading bot for Kraken spot, paper-first, with a deterministic risk layer."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "ccxt>=4.5",
+    "litellm>=1.104",
+    "pydantic>=2.13",
+    "pydantic-settings>=2.15",
+    "pyyaml>=6.0",
+    "pandas>=3.0",
+    "numpy>=2.5",
+    "apscheduler>=3.11,<4",  # 4.x is a rewrite with a different API
+    "sqlalchemy>=2.1",
+    "python-telegram-bot>=22.8",
+    "streamlit>=1.65",
+    "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1",
+    "pytest-asyncio>=1.4",
+    "ruff>=0.16",
+]
+
+[project.scripts]
+ai-trader = "ai_trader.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ai_trader"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "B",       # bugbear
+    "UP",      # pyupgrade
+    "SIM",     # simplify
+    "DTZ",     # timezone-naive datetimes (everything is UTC)
+    "RUF",
+]

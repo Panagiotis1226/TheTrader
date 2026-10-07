@@ -1,0 +1,34 @@
+# Trading configuration. Risk limits live here and in code — never in the LLM prompt.
+pairs: ["BTC/CAD", "ETH/CAD"]         # spot whitelist; quote must match quote_currency
+quote_currency: CAD
+decision_interval_minutes: 240        # start slow: every 4h
+max_data_age_seconds: 60
+
+paper:
+  starting_cash_cad: 10000
+  # VERIFY against current Kraken Pro fee schedule for your volume tier
+  taker_fee_pct: 0.40
+  maker_fee_pct: 0.25
+
+risk:
+  max_trade_pct_of_equity: 10
+  max_position_pct_per_pair: 30
+  max_total_exposure_pct: 60
+  daily_loss_limit_pct: 3             # halt trading for the day
+  max_drawdown_halt_pct: 15           # halt until manual /resume
+  min_minutes_between_trades: 60
+  min_confidence: 0.6
+  max_trades_per_day: 6
+  default_stop_loss_pct: 5
+
+models:                               # each gets its own paper account
+  # Fill in current model IDs before Phase 2. Placeholders ("<model-id>") are
+  # loaded fine but will be refused when the agent tries to call them.
+  - name: claude
+    litellm_model: "anthropic/<model-id>"
+  - name: gpt
+    litellm_model: "openai/<model-id>"
+  - name: gemini
+    litellm_model: "gemini/<model-id>"
+
+benchmarks: [buy_and_hold, ma_crossover, do_nothing]
