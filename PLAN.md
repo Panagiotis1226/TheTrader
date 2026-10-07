@@ -389,7 +389,7 @@ Recorded so later phases (and later sessions) build on what exists, not just the
 - **Claude only, via the Claude Team seat.** GPT and Gemini were dropped. The default model
   uses `provider: claude_code` (`claude -p`, locked down to a plain completion, auth via
   `CLAUDE_CODE_OAUTH_TOKEN`). `provider: litellm` remains available for API models. Phase 4's
-  Docker image must include Node and the Claude Code CLI.
+  Docker image must include the Claude Code CLI (native installer; no Node needed).
 - **Kill switch keeps stop-losses.** `/stop` halts trading and cancels other open orders, but
   protective stops stay so open positions remain protected.
 - **Buys are sized in quote currency** (`OrderRequest.quote_amount`), so slippage can't push a
