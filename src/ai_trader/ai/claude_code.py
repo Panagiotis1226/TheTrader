@@ -8,9 +8,9 @@ The call is locked down to a plain completion:
   ``--strict-mcp-config`` remove every tool, ``--setting-sources ""`` skips user/project
   settings (and their hooks), and it runs in an empty temp directory so no CLAUDE.md
   is picked up. ``--max-turns 1``, no session persistence.
-* ``ANTHROPIC_API_KEY`` and other API-routing variables are removed from the child
-  environment so a call can never silently switch to per-token API billing. Auth is
-  ``CLAUDE_CODE_OAUTH_TOKEN`` (from ``claude setup-token``).
+* The child environment is an allowlist: none of the bot's other secrets reach it, and
+  ``ANTHROPIC_API_KEY`` and other API-routing variables can't silently switch a call to
+  per-token API billing. Auth is ``CLAUDE_CODE_OAUTH_TOKEN`` (from ``claude setup-token``).
 * Output goes through the same strict parser as the litellm agent: anything but one
   JSON object is ``hold``. No retries.
 """
@@ -36,15 +36,18 @@ from ai_trader.data.snapshot import MarketSnapshot
 log = logging.getLogger(__name__)
 
 MAX_ERROR_CHARS = 500
-# Never let these reach the child: they would route the call to API billing or elsewhere.
-_STRIPPED_ENV = (
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_OAUTH_TOKEN",  # re-added from EnvSettings below
-)
+# The child gets an allowlisted environment only: our other secrets (Telegram, Kraken,
+# healthcheck URL) never reach it, and API-routing variables like ANTHROPIC_API_KEY can't
+# silently switch a call to per-token API billing.
+_PASSTHROUGH_ENV = frozenset(
+    {
+        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TZ", "TMPDIR", "TERM",
+        "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+        "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE",
+        "CLAUDE_CONFIG_DIR", "DISABLE_AUTOUPDATER",
+    }
+)  # fmt: skip
+_PASSTHROUGH_PREFIXES = ("LC_", "XDG_")
 
 
 @dataclass(frozen=True)
@@ -120,7 +123,11 @@ class ClaudeCodeAgent:
         self._runner = runner
 
     def _child_env(self) -> dict[str, str]:
-        env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV}
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if k in _PASSTHROUGH_ENV or k.startswith(_PASSTHROUGH_PREFIXES)
+        }
         if self._token:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = self._token
         env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"

@@ -21,6 +21,7 @@ dependencies = [
     "python-telegram-bot>=22.8",
     "streamlit>=1.65",
     "httpx>=0.28",
+    "tzdata>=2025.2",  # zoneinfo data for slim containers
 ]
 
 [project.optional-dependencies]

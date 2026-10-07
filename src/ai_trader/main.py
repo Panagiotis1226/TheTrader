@@ -4,7 +4,8 @@ Startup order: load + validate config → mode guard → command.
 The mode guard runs before anything that could touch an exchange.
 
 Commands:
-  (none)    validate config and exit (the scheduler arrives in Phase 4)
+  (none)    validate config and exit
+  run       run unattended: scheduler, Telegram alerts and commands, heartbeat
   once      run one decision cycle for every paper account (models + benchmarks)
   backtest  replay daily Kraken candles through the decision path (benchmarks; --with-llm)
 """
@@ -13,8 +14,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
 import logging
+import signal
 import sys
 from collections.abc import Collection
 from datetime import UTC, datetime
@@ -23,7 +26,9 @@ from pathlib import Path
 from ai_trader.ai.agent import CompletionFn, DecisionMaker, LLMAgent
 from ai_trader.ai.claude_code import ClaudeCodeAgent, Runner, run_subprocess
 from ai_trader.ai.prompt import render_system_prompt
-from ai_trader.alerts.base import LogAlerter
+from ai_trader.alerts.base import Alerter, LogAlerter
+from ai_trader.alerts.heartbeat import Heartbeat
+from ai_trader.alerts.telegram_bot import CommandRouter, TelegramAlerter, TelegramBot
 from ai_trader.backtest.data import (
     DEFAULT_CANDLES_DIR,
     candles_path,
@@ -46,6 +51,7 @@ from ai_trader.config import (
 from ai_trader.cycle import CycleOutcome, CycleStatus, DecisionCycle, TradingAccount
 from ai_trader.data.market import Clock, MarketData, utcnow
 from ai_trader.risk.manager import RiskManager
+from ai_trader.service import TradingService
 from ai_trader.storage.repo import Repository
 from ai_trader.strategies import build_benchmark
 
@@ -94,6 +100,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="settings YAML (default: SETTINGS_PATH or config/settings.yaml)",
     )
     sub = parser.add_subparsers(dest="command")
+    sub.add_parser("run", help="run unattended (scheduler, Telegram, heartbeat)")
     once = sub.add_parser("once", help="run one decision cycle for each model's paper account")
     once.add_argument(
         "--model",
@@ -231,6 +238,74 @@ async def run_once(
         await market.close()
 
 
+async def run_service(config: AppConfig, mode: Mode) -> int:
+    """Run until SIGTERM/SIGINT. Docker restarts the container if it dies."""
+    if mode is not Mode.PAPER:
+        log.critical("Live trading is not implemented until Phase 6; refusing to run")
+        return EXIT_UNSUPPORTED
+    trading, env = config.trading, config.env
+    repo = Repository.from_url(env.database_url)
+    market = MarketData()
+    accounts = build_paper_accounts(config, repo, market)
+    if not accounts:
+        log.error("No accounts to run")
+        await market.close()
+        return EXIT_CONFIG_ERROR
+
+    bot: TelegramBot | None = None
+    alerter: Alerter = LogAlerter()
+    service: TradingService | None = None
+    if env.telegram_bot_token and env.telegram_chat_id:
+        chat_id = int(env.telegram_chat_id)
+
+        # The bot is built before the service (the service alerts through it), so
+        # commands look the service up when they run.
+        async def dispatch(name: str) -> str:
+            assert service is not None
+            return await service.commands()[name]()
+
+        router = CommandRouter(
+            chat_id, {n: functools.partial(dispatch, n) for n in TradingService.COMMANDS}
+        )
+        bot = TelegramBot(env.telegram_bot_token.get_secret_value(), router)
+        alerter = TelegramAlerter(bot.bot, chat_id)
+    else:
+        log.warning("Telegram not configured: alerts go to the log only and /stop is unavailable")
+    heartbeat = Heartbeat(env.healthcheck_url.get_secret_value() if env.healthcheck_url else None)
+    if not heartbeat.enabled:
+        log.warning("HEALTHCHECK_URL not set: no external heartbeat")
+
+    risk = RiskManager(trading.risk, trading.pairs, trading.paper.taker_fee_pct)
+    cycle = DecisionCycle(trading, repo, market, risk, alerter)
+    service = TradingService(trading, repo, cycle, accounts, alerter, heartbeat)
+
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop_event.set)
+
+    try:
+        if bot is not None:
+            await bot.start()
+        service.schedule(run_cycle_now=True)
+        service.scheduler.start()
+        halts = repo.active_halts(None, utcnow())
+        await alerter.send(
+            f"ai-trader started (paper): {', '.join(a.account_id for a in accounts)}. "
+            f"Cycle every {trading.decision_interval_minutes} min"
+            + (f". Active halts: {', '.join(h.kind.value for h in halts)}" if halts else "")
+        )
+        await stop_event.wait()
+        log.info("Shutting down")
+    finally:
+        if service.scheduler.running:
+            service.scheduler.shutdown(wait=False)
+        if bot is not None:
+            await bot.stop()
+        await market.close()
+    return EXIT_OK
+
+
 async def load_backtest_data(config: AppConfig, candles_dir: Path, refresh: bool):
     """Daily candles + market metadata, from the local cache (fetched when missing)."""
     pairs = config.trading.pairs
@@ -357,11 +432,13 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_CYCLE_FAILED
         return EXIT_OK
 
+    if args.command == "run":
+        return asyncio.run(run_service(config, mode))
+
     if args.command == "backtest":
         reports = asyncio.run(run_backtest(config, args))
         return EXIT_OK if reports else EXIT_CYCLE_FAILED
 
-    # The scheduler is added in Phase 4.
     return EXIT_OK
 
 

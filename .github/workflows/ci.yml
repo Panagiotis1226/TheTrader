@@ -23,3 +23,11 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t ai-trader:ci .
+      - run: docker run --rm --entrypoint sh ai-trader:ci -c "claude --version && ai-trader --help"
+      - run: cp .env.example .env && docker compose config -q

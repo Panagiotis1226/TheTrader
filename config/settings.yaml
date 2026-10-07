@@ -30,6 +30,14 @@ llm:
   max_daily_calls: 12                 # per account; 6 scheduled + room for manual runs
   max_daily_cost_usd: 2.00            # per account (claude_code: API-equivalent estimate)
 
+monitoring:
+  timezone: America/Toronto           # Quebec time for the reports below
+  daily_summary_time: "08:00"
+  weekly_report_day: mon              # weekly performance report, same time
+  stop_check_seconds: 60              # stop-loss / price check
+  equity_snapshot_minutes: 60
+  max_consecutive_errors: 3           # failed cycles in a row -> halt until /resume
+
 backtest:
   slippage_pct: 0.10                  # per fill, on top of fees (no historical order books)
   warmup_days: 50                     # history before the first decision (covers SMA 50)

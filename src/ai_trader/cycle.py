@@ -50,6 +50,9 @@ from ai_trader.storage.repo import REDUCE_ONLY_HALTS, Repository
 log = logging.getLogger(__name__)
 
 
+MARKET_DATA_SKIP = "market data unusable"
+
+
 class CycleStatus(StrEnum):
     TRADED = "traded"
     HELD = "held"  # hold proposal (including fallback holds on bad output)
@@ -101,7 +104,7 @@ class DecisionCycle:
 
     async def run(self, accounts: Sequence[TradingAccount]) -> list[CycleOutcome]:
         for account in accounts:
-            await self._check_stops(account)
+            await self.check_stops(account)
 
         try:
             data = {
@@ -114,7 +117,7 @@ class DecisionCycle:
                 AlertLevel.WARNING,
             )
             return [
-                CycleOutcome(a.account_id, CycleStatus.SKIPPED, f"market data: {exc}")
+                CycleOutcome(a.account_id, CycleStatus.SKIPPED, f"{MARKET_DATA_SKIP}: {exc}")
                 for a in accounts
             ]
 
@@ -135,13 +138,14 @@ class DecisionCycle:
 
     # ------------------------------------------------------------------ internals
 
-    async def _check_stops(self, account: TradingAccount) -> None:
+    async def check_stops(self, account: TradingAccount) -> None:
+        """Trigger due stop-losses for one account and alert on fills. Never raises."""
         try:
             for result in await account.broker.check_stops():
                 if result.filled:
                     await self._alerter.send(
                         f"{account.account_id}: STOP-LOSS sold {result.filled_amount} "
-                        f"@ {result.avg_price} (fee {result.fee})",
+                        f"@ {result.avg_price:,.2f} (fee {result.fee:.2f})",
                         AlertLevel.WARNING,
                     )
         except Exception:
@@ -241,7 +245,7 @@ class DecisionCycle:
 
         await self._alerter.send(
             f"{acct}: {risk.order.side.value.upper()} {order.filled_amount} {risk.order.pair} "
-            f"@ {order.avg_price} = {order.cost:.2f} + fee {order.fee:.2f} "
+            f"@ {order.avg_price:,.2f} = {order.cost:,.2f} + fee {order.fee:.2f} "
             f"({risk.outcome.value}: {risk.reason})"
         )
         return CycleOutcome(acct, CycleStatus.TRADED, risk.reason, decision_id)

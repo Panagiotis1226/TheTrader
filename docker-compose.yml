@@ -1,0 +1,38 @@
+# docker compose up -d   -> bot + dashboard (dashboard on 127.0.0.1:8501 only).
+services:
+  bot:
+    build: .
+    image: ai-trader:latest
+    restart: always
+    env_file: .env            # secrets: never baked into the image
+    volumes:
+      - ./data:/app/data      # SQLite DB, candle cache, backtests (back this up)
+      - ./config:/app/config:ro
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  dashboard:
+    image: ai-trader:latest
+    restart: always
+    depends_on: [bot]
+    # No env_file: the dashboard only reads the database and needs no secrets.
+    environment:
+      DATABASE_URL: sqlite:///data/trader.db
+    command:
+      - streamlit
+      - run
+      - /app/src/ai_trader/dashboard/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    ports:
+      - "127.0.0.1:8501:8501"   # localhost only: use an SSH tunnel, never expose it
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

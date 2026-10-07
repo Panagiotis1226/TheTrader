@@ -7,8 +7,8 @@ proposal. Paper and live trading share one code path; only the broker changes.
 The goal is to find out whether an LLM can trade profitably **in paper trading** before any real
 money is used. See [`PLAN.md`](PLAN.md) for the full design and phase plan.
 
-> **Status:** Phase 3 done — benchmarks and the backtester. Decisions run on demand
-> (`ai-trader once`, `ai-trader backtest`); no scheduler yet (Phase 4).
+> **Status:** Phase 4 done — runs unattended in Docker with Telegram alerts and kill
+> switch, a heartbeat, and a dashboard. See [`DEPLOY.md`](DEPLOY.md) to put it on a VPS.
 
 ## Safety
 
@@ -35,6 +35,7 @@ cp .env.example .env          # leave MODE=paper
 pytest && ruff check . && ruff format --check .
 ai-trader                     # validates config, runs the mode guard, exits
 python scripts/print_snapshot.py BTC/CAD   # live MarketSnapshot from Kraken public data
+ai-trader run                 # unattended: scheduler, Telegram, heartbeat (Ctrl-C to stop)
 ai-trader once                # one decision cycle for every paper account
 ai-trader once --model claude # just one account
 ai-trader backtest            # benchmarks over the cached daily history
@@ -112,6 +113,33 @@ order books, run the RiskManager, place the order if approved, alert.
   risk/fee setting changes — useful for keeping the Phase 5 evaluation honest.
 - **Kill switch** (`risk/killswitch.py`, wired to Telegram `/stop` in Phase 4) halts all
   trading and cancels open orders but keeps stop-losses, so open positions stay protected.
+
+## Running unattended
+
+`ai-trader run` (or `docker compose up -d`, see [`DEPLOY.md`](DEPLOY.md)) schedules:
+
+- a decision cycle every `decision_interval_minutes` (and one at startup);
+- a stop-loss check every minute and an equity snapshot every hour;
+- a daily summary at 08:00 and a weekly report on Mondays (Quebec time, `monitoring:`).
+
+**Telegram** (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`): every trade, risk rejection, halt,
+error and report is sent to your chat. Commands are accepted from that chat only:
+
+| | |
+|---|---|
+| `/status` | halts, positions, last and next cycle |
+| `/equity` | equity of every account vs. its start |
+| `/stop` | kill switch: halts all trading immediately and cancels open orders; stop-losses stay. It also blocks an order from a decision already in progress. |
+| `/resume` | lifts all halts |
+
+**Errors:** a failing cycle is logged and alerted and the bot carries on. Three failed
+cycles in a row halt that account (or everything, if the whole cycle fails) until `/resume`.
+**Heartbeat:** healthchecks.io is pinged after every good cycle (`HEALTHCHECK_URL`), and on
+failure.
+
+**Dashboard:** `streamlit run src/ai_trader/dashboard/app.py` (in Docker: localhost:8501 via
+an SSH tunnel). Shows return curves for all accounts, trades, the decision log with the
+model's reasoning, risk rejections, and LLM cost per day.
 
 ## Benchmarks
 

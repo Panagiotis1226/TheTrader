@@ -120,11 +120,25 @@ async def test_successful_decision(write_env) -> None:
 async def test_child_env_uses_subscription_never_api_key(write_env, monkeypatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api-should-not-leak")
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://elsewhere.example")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:telegram-secret")
+    monkeypatch.setenv("KRAKEN_API_SECRET", "kraken-secret")
+    monkeypatch.setenv("HEALTHCHECK_URL", "https://hc-ping.com/secret-uuid")
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy:3128")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
     runner = FakeRunner(cli_output(json.dumps(BUY)))
     await make_agent(runner, write_env, CLAUDE_CODE_OAUTH_TOKEN=TOKEN).decide(SNAPSHOT)
     env = runner.calls[0]["env"]
-    assert "ANTHROPIC_API_KEY" not in env
-    assert "ANTHROPIC_BASE_URL" not in env
+    for secret in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "TELEGRAM_BOT_TOKEN",
+        "KRAKEN_API_SECRET",
+        "HEALTHCHECK_URL",
+    ):
+        assert secret not in env, secret
+    assert env["HTTPS_PROXY"] == "http://proxy:3128"  # networking still works
+    assert env["LC_ALL"] == "C.UTF-8"
+    assert "PATH" in env
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == TOKEN
     assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
 

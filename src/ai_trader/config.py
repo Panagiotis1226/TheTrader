@@ -198,6 +198,26 @@ class BacktestSettings(_StrictModel):
     llm_max_decisions: Annotated[int, Field(ge=1)]  # cap for --with-llm runs
 
 
+class MonitoringSettings(_StrictModel):
+    timezone: str  # for the daily/weekly report times, e.g. America/Toronto
+    daily_summary_time: Annotated[str, Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")]
+    weekly_report_day: Literal["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    stop_check_seconds: Annotated[int, Field(ge=10, le=3600)]
+    equity_snapshot_minutes: Annotated[int, Field(ge=1, le=1440)]
+    max_consecutive_errors: Annotated[int, Field(ge=1)]  # then halt (needs /resume)
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, value: str) -> str:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown timezone {value!r}") from exc
+        return value
+
+
 class TradingSettings(_StrictModel):
     pairs: Annotated[list[str], Field(min_length=1)]
     quote_currency: Annotated[str, Field(pattern=r"^[A-Z]{3,5}$")]
@@ -207,6 +227,7 @@ class TradingSettings(_StrictModel):
     risk: RiskSettings
     llm: LLMSettings
     backtest: BacktestSettings
+    monitoring: MonitoringSettings
     models: list[ModelSettings] = Field(default_factory=list)
     benchmarks: list[BenchmarkName] = Field(default_factory=list)
 

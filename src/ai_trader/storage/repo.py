@@ -286,6 +286,14 @@ class Repository:
         with self._sessions.begin() as s:
             s.execute(update(DecisionRow).where(DecisionRow.id == decision_id).values(**fields))
 
+    def list_decisions(self, limit: int = 500) -> list[dict[str, Any]]:
+        """Most recent decisions (all accounts), every logged column."""
+        with self._sessions() as s:
+            rows = s.scalars(
+                select(DecisionRow).order_by(DecisionRow.created_at.desc()).limit(limit)
+            ).all()
+            return [{c.key: getattr(r, c.key) for c in DecisionRow.__table__.columns} for r in rows]
+
     def decision_details(self, decision_id: int) -> dict[str, Any] | None:
         """Every logged column of one decision (for audits and the dashboard)."""
         with self._sessions() as s:
@@ -293,6 +301,47 @@ class Repository:
             if row is None:
                 return None
             return {c.key: getattr(row, c.key) for c in DecisionRow.__table__.columns}
+
+    def decision_stats(self, account_id: str) -> dict[str, Any]:
+        """Decision counts: trade proposals by risk outcome, unusable outputs, LLM cost."""
+        with self._sessions() as s:
+            rows = s.execute(
+                select(
+                    DecisionRow.action,
+                    DecisionRow.risk_outcome,
+                    DecisionRow.cost_usd,
+                    DecisionRow.error,
+                ).where(DecisionRow.account_id == account_id)
+            ).all()
+        stats: dict[str, Any] = {
+            "decisions": len(rows),
+            "trade_proposals": 0,
+            "rejected": 0,
+            "resized": 0,
+            "errors": 0,
+            "llm_cost_usd": Decimal(0),
+        }
+        for action, outcome, cost, error in rows:
+            if error:
+                stats["errors"] += 1
+            if action in ("buy", "sell"):
+                stats["trade_proposals"] += 1
+                if outcome == "reject":
+                    stats["rejected"] += 1
+                elif outcome == "resize":
+                    stats["resized"] += 1
+            if cost is not None:
+                stats["llm_cost_usd"] += cost
+        return stats
+
+    def equity_series(self, account_id: str) -> list[tuple[datetime, Decimal]]:
+        with self._sessions() as s:
+            rows = s.execute(
+                select(EquitySnapshotRow.ts, EquitySnapshotRow.equity)
+                .where(EquitySnapshotRow.account_id == account_id)
+                .order_by(EquitySnapshotRow.ts, EquitySnapshotRow.id)
+            ).all()
+            return [(ts, eq) for ts, eq in rows]
 
     def count_decisions_since(self, account_id: str, since: datetime) -> int:
         with self._sessions() as s:

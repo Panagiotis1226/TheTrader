@@ -408,3 +408,7 @@ Recorded so later phases (and later sessions) build on what exists, not just the
   candles, and longer history comes from Kraken's OHLCVT downloads.
 - **Claude Code CLI on the VPS**: Claude Desktop doesn't give scripts a `claude` command, so
   the CLI is installed with the native installer.
+- **Phase 4:** the bot runs one cycle at startup and then every interval; queued Telegram
+  commands are processed after a restart (a `/stop` sent while it was down still applies);
+  the Claude Code subprocess gets an allowlisted environment (no other secrets); the
+  dashboard container gets no secrets at all.
