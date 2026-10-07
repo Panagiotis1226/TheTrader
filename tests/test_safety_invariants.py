@@ -37,7 +37,7 @@ def test_no_withdrawal_transfer_or_margin_calls() -> None:
 def test_env_is_gitignored() -> None:
     lines = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert ".env" in lines
-    assert "data/" in lines
+    assert "/data/" in lines  # anchored: must not ignore src/ai_trader/data/
 
 
 def test_env_example_has_no_values_for_secrets() -> None:
@@ -53,3 +53,13 @@ def test_env_example_has_no_values_for_secrets() -> None:
         key, sep, value = line.partition("=")
         if sep and key.strip() in secret_keys:
             assert value.split("#")[0].strip() == "", f"{key} must be blank in .env.example"
+
+
+def test_source_files_are_not_gitignored() -> None:
+    import subprocess
+
+    files = [str(p.relative_to(REPO_ROOT)) for p in _source_files()]
+    result = subprocess.run(
+        ["git", "check-ignore", *files], cwd=REPO_ROOT, capture_output=True, text=True
+    )
+    assert result.stdout.strip() == "", f"source files ignored by git:\n{result.stdout}"

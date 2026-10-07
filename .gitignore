@@ -4,7 +4,7 @@
 !.env.example
 
 # Runtime state (SQLite DB, logs, caches)
-data/
+/data/
 
 # Python
 __pycache__/
