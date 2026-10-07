@@ -40,3 +40,10 @@ def write_env(tmp_path: Path):
         return path
 
     return _write
+
+
+@pytest.fixture
+def repo(tmp_path: Path):
+    from ai_trader.storage.repo import Repository
+
+    return Repository.from_url(f"sqlite:///{tmp_path / 'test.db'}")

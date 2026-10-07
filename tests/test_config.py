@@ -52,8 +52,8 @@ def test_repo_settings_load() -> None:
 
 def test_yaml_floats_become_exact_decimals() -> None:
     s = load_trading_settings(SETTINGS_PATH)
-    assert s.paper.taker_fee_pct == Decimal("0.4")
-    assert str(s.paper.taker_fee_pct) in {"0.4", "0.40"}
+    assert s.paper.taker_fee_pct == Decimal("0.8")
+    assert str(s.paper.taker_fee_pct) in {"0.8", "0.80"}
     assert s.risk.min_confidence == Decimal("0.6")
 
 

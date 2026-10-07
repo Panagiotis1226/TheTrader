@@ -7,7 +7,8 @@ proposal. Paper and live trading share one code path; only the broker changes.
 The goal is to find out whether an LLM can trade profitably **in paper trading** before any real
 money is used. See [`PLAN.md`](PLAN.md) for the full design and phase plan.
 
-> **Status:** Phase 0 (scaffolding, config, mode guard). Nothing trades yet.
+> **Status:** Phase 1 done — market data, indicators, snapshots, PaperBroker, RiskManager,
+> storage. No LLM and no trading loop yet.
 
 ## Safety
 
@@ -33,7 +34,11 @@ pip install -e '.[dev]'
 cp .env.example .env          # leave MODE=paper
 pytest && ruff check . && ruff format --check .
 ai-trader                     # validates config, runs the mode guard, exits
+python scripts/print_snapshot.py BTC/CAD   # live MarketSnapshot from Kraken public data
 ```
+
+`scripts/record_fixtures.py` re-records the Kraken responses in `tests/fixtures/` that the
+unit tests replay. Tests never touch the network.
 
 Configuration:
 
@@ -44,6 +49,33 @@ Configuration:
 
 Before trading, verify the Kraken Pro fees for your volume tier and fill in real model IDs in
 `settings.yaml`. The bot warns at startup while a model ID is still a `<model-id>` placeholder.
+
+## How paper trading is simulated
+
+- **Fills** walk the live Kraken order book (asks for buys, bids for sells), so the average
+  price includes slippage. If the fetched book (100 levels) can't fill the order, it is
+  rejected, not partially filled.
+- **Fees**: the taker fee from `settings.yaml` is charged on every fill, in CAD.
+- **Exchange rules**: amounts round down to Kraken's step; min amount and min order value
+  (e.g. 0.00005 BTC and 1 CAD) are enforced, as is available balance including the fee.
+- **Stop-losses** rest inside the broker (one per pair, covering the whole position) and
+  trigger as market sells when the best bid reaches the trigger.
+- **Equity** marks positions at the best bid.
+- **State** is rebuilt from the fill log on restart, so balances can't drift from fills.
+
+## Risk rules
+
+Every proposal goes through `RiskManager.evaluate`, which returns approve / resize / reject:
+
+- Halts (manual, drawdown, daily loss, errors) block all trading; `hold` is always allowed.
+- Whitelisted pairs only, minimum confidence, max trades per UTC day, minimum minutes
+  between trades. Stop-loss fills don't count as trades.
+- Buys: `size_pct` is a % of total equity, then cut down to the tightest of: max per trade,
+  max per pair, max total exposure, and cash after fees. Each resize says which limit bound.
+- Sells: `size_pct` is a % of the position; never size-capped (selling reduces risk).
+- Stop-loss: the model may tighten the default stop, never loosen it.
+- Daily loss (vs. equity at UTC midnight) halts until the next UTC midnight; max drawdown
+  (vs. peak since the last resume) halts until `/resume`.
 
 ## Backtests and LLMs: important caveat
 

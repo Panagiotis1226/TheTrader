@@ -6,9 +6,12 @@ max_data_age_seconds: 60
 
 paper:
   starting_cash_cad: 10000
-  # VERIFY against current Kraken Pro fee schedule for your volume tier
-  taker_fee_pct: 0.40
-  maker_fee_pct: 0.25
+  # UNVERIFIED — Kraken's spot fee tier is only readable with an authenticated key.
+  # Kraken's Sept 2026 support page says spot taker fees go "up to 0.80%" (earlier
+  # 2026 versions said 0.40%). Using the higher figure so paper results err on the side
+  # of too costly. Set to your real tier once known (Kraken API: TradeVolume).
+  taker_fee_pct: 0.80
+  maker_fee_pct: 0.40
 
 risk:
   max_trade_pct_of_equity: 10
