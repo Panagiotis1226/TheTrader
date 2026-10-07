@@ -7,8 +7,8 @@ proposal. Paper and live trading share one code path; only the broker changes.
 The goal is to find out whether an LLM can trade profitably **in paper trading** before any real
 money is used. See [`PLAN.md`](PLAN.md) for the full design and phase plan.
 
-> **Status:** Phase 2 done — LLM agents and the decision cycle run on demand
-> (`ai-trader once`). No scheduler yet (Phase 4).
+> **Status:** Phase 3 done — benchmarks and the backtester. Decisions run on demand
+> (`ai-trader once`, `ai-trader backtest`); no scheduler yet (Phase 4).
 
 ## Safety
 
@@ -35,8 +35,10 @@ cp .env.example .env          # leave MODE=paper
 pytest && ruff check . && ruff format --check .
 ai-trader                     # validates config, runs the mode guard, exits
 python scripts/print_snapshot.py BTC/CAD   # live MarketSnapshot from Kraken public data
-ai-trader once                # one decision cycle per configured model (paper accounts)
-ai-trader once --model claude # just one model
+ai-trader once                # one decision cycle for every paper account
+ai-trader once --model claude # just one account
+ai-trader backtest            # benchmarks over the cached daily history
+ai-trader backtest --with-llm --llm-days 3   # plus Claude over the last 3 days (plumbing)
 ```
 
 State goes to `DATABASE_URL` (default `data/trader.db`).
@@ -46,7 +48,10 @@ State goes to `DATABASE_URL` (default `data/trader.db`).
 The default model (`provider: claude_code` in `settings.yaml`) runs the Claude Code CLI
 (`claude -p`) on your Team seat, so there is no per-token API bill. Setup:
 
-1. Install Claude Code where the bot runs (`npm install -g @anthropic-ai/claude-code`).
+1. Install the Claude Code CLI where the bot runs: `curl -fsSL https://claude.ai/install.sh | bash`
+   (the native installer; Homebrew/npm also work). The Claude Desktop app doesn't give other
+   programs a `claude` command, so the bot needs the CLI even if you use Desktop. Set
+   `CLAUDE_BIN` in `.env` if it isn't on `PATH` (default install: `~/.local/bin/claude`).
 2. On any machine with a browser, run `claude setup-token` and put the token in `.env` as
    `CLAUDE_CODE_OAUTH_TOKEN` (valid one year).
 3. `ai-trader once --model claude` to check it works.
@@ -108,11 +113,48 @@ order books, run the RiskManager, place the order if approved, alert.
 - **Kill switch** (`risk/killswitch.py`, wired to Telegram `/stop` in Phase 4) halts all
   trading and cancels open orders but keeps stop-losses, so open positions stay protected.
 
+## Benchmarks
+
+Each benchmark has its own paper account (`paper-<name>`) and goes through the same
+RiskManager and caps as Claude, but without a forced stop-loss (a buy-and-hold that sells
+on every 5% dip isn't buy-and-hold):
+
+- `buy_and_hold`: buys the first pair (BTC/CAD) up to the per-pair cap (30%), then never
+  trades again. It counts capital at cost, so it never buys dips or trims rallies.
+- `ma_crossover`: per pair, invested up to the per-pair cap while daily SMA20 > SMA50,
+  fully out when SMA20 < SMA50.
+- `do_nothing`: holds cash.
+
+## Backtesting
+
+`ai-trader backtest` replays daily candles through the live decision path (snapshot →
+strategy → RiskManager → PaperBroker), one decision per daily close. Only the market and
+the clock are simulated:
+
+- Decisions only see candles that had closed (tested for look-ahead).
+- Fills use the candle price ± `backtest.slippage_pct`, plus the taker fee.
+- Stop-losses use each day's candle: a gap below the trigger fills at the open, otherwise
+  touching the low fills at the trigger.
+- A drawdown halt needs a manual `/resume`, which never comes in a backtest: from then on
+  the account can only sell. The report lists every halt with its date.
+
+Reports show return, CAGR, max drawdown, Sharpe, trades, stop fills, fees, win rate, and
+the market's own move (100% hold, no fees); full results with equity curves go to
+`data/backtests/`.
+
+**History:** Kraken's API serves only the last 720 daily candles (~2 years; ~1.8 years of
+decisions after the 50-day warm-up). The cache in `data/candles/` is merged on every
+`--refresh-data`, so it grows over time. For full history, download Kraken's
+[OHLCVT files](https://support.kraken.com/articles/360047124832-downloadable-historical-ohlcvt-open-high-low-close-volume-trades-data)
+and copy the daily file (e.g. `XBTCAD_1440.csv`) to `data/candles/BTC_CAD_1d.csv`; it is read as is.
+
 ## Risk rules
 
 Every proposal goes through `RiskManager.evaluate`, which returns approve / resize / reject:
 
-- Halts (manual, drawdown, daily loss, errors) block all trading; `hold` is always allowed.
+- Halts: manual (`/stop`) and error halts block all trading. The automatic daily-loss and
+  drawdown halts are reduce-only: no new buys, but sells (and stop-losses) still work, so a
+  halt never traps an account in a falling position. `hold` is always allowed.
 - Whitelisted pairs only, minimum confidence, max trades per UTC day, minimum minutes
   between trades. Stop-loss fills don't count as trades.
 - Buys: `size_pct` is a % of total equity, then cut down to the tightest of: max per trade,

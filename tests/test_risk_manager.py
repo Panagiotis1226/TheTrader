@@ -187,11 +187,46 @@ def test_reject_non_positive_equity(rm) -> None:
 
 
 @pytest.mark.parametrize("kind", list(HaltKind))
-def test_reject_when_halted(rm, kind) -> None:
+def test_buys_rejected_under_any_halt(rm, kind) -> None:
     d = rm.evaluate(proposal(), state(active_halts=(kind,)))
     assert d.outcome is RiskOutcome.REJECT
     assert "halted" in d.reason
     assert d.halt is None  # already recorded
+
+
+@pytest.mark.parametrize("kind", [HaltKind.MANUAL, HaltKind.ERRORS])
+def test_full_stop_halts_reject_sells(rm, kind) -> None:
+    s = state(**with_positions("7000", BTC="3000"), active_halts=(kind,))
+    assert rm.evaluate(proposal(action="sell", size="100"), s).outcome is RiskOutcome.REJECT
+
+
+@pytest.mark.parametrize("kind", [HaltKind.DAILY_LOSS, HaltKind.DRAWDOWN])
+def test_risk_limit_halts_still_allow_sells(rm, kind) -> None:
+    s = state(**with_positions("7000", BTC="3000"), active_halts=(kind,))
+    d = rm.evaluate(proposal(action="sell", size="100"), s)
+    assert d.outcome is RiskOutcome.APPROVE
+    assert d.order.amount == D("0.03")
+
+
+def test_mixed_halts_are_a_full_stop(rm) -> None:
+    s = state(
+        **with_positions("7000", BTC="3000"), active_halts=(HaltKind.DRAWDOWN, HaltKind.MANUAL)
+    )
+    assert rm.evaluate(proposal(action="sell", size="100"), s).outcome is RiskOutcome.REJECT
+
+
+def test_newly_breached_limit_still_allows_sells(rm) -> None:
+    s = state(
+        equity=D(8500),
+        cash=D(5500),
+        peak_equity=D(10000),
+        day_start_equity=D(8500),
+        position_amounts={"BTC/CAD": D("0.03")},
+        position_values={"BTC/CAD": D(3000)},
+    )
+    d = rm.evaluate(proposal(action="sell", size="100"), s)
+    assert d.halt is HaltKind.DRAWDOWN
+    assert d.outcome is RiskOutcome.APPROVE
 
 
 def test_hold_allowed_while_halted(rm) -> None:
@@ -254,7 +289,7 @@ def test_sell_without_position_rejected(rm) -> None:
     assert "no BTC/CAD position" in d.reason
 
 
-def test_sell_blocked_by_halt_and_confidence(rm) -> None:
+def test_sell_blocked_by_manual_halt_and_confidence(rm) -> None:
     s = state(**with_positions("7000", BTC="3000"))
     halted = replace(s, active_halts=(HaltKind.MANUAL,))
     assert rm.evaluate(proposal(action="sell", size="100"), halted).outcome is RiskOutcome.REJECT

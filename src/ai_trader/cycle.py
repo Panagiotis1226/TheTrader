@@ -45,7 +45,7 @@ from ai_trader.risk.manager import (
     record_halt,
     utc_day_start,
 )
-from ai_trader.storage.repo import Repository
+from ai_trader.storage.repo import REDUCE_ONLY_HALTS, Repository
 
 log = logging.getLogger(__name__)
 
@@ -65,6 +65,7 @@ class TradingAccount:
 
     broker: PaperBroker
     decider: DecisionMaker
+    risk: RiskManager | None = None  # overrides the cycle's default (e.g. benchmarks)
 
     @property
     def account_id(self) -> str:
@@ -88,6 +89,7 @@ class DecisionCycle:
         risk: RiskManager,
         alerter: Alerter,
         clock: Clock = utcnow,
+        require_intraday: bool = True,
     ) -> None:
         self._settings = settings
         self._repo = repo
@@ -95,6 +97,7 @@ class DecisionCycle:
         self._risk = risk
         self._alerter = alerter
         self._clock = clock
+        self._require_intraday = require_intraday
 
     async def run(self, accounts: Sequence[TradingAccount]) -> list[CycleOutcome]:
         for account in accounts:
@@ -152,9 +155,10 @@ class DecisionCycle:
         now = self._clock()
 
         halts = self._repo.active_halts(acct, now)
-        if halts:
+        if any(h.kind not in REDUCE_ONLY_HALTS for h in halts):
             kinds = ", ".join(sorted({h.kind.value for h in halts}))
             return CycleOutcome(acct, CycleStatus.SKIPPED, f"halted ({kinds})")
+        # Reduce-only halts (daily loss, drawdown) still run: the RiskManager allows sells.
 
         day_start = utc_day_start(now)
         calls = self._repo.count_decisions_since(acct, day_start)
@@ -183,6 +187,7 @@ class DecisionCycle:
                 now=now,
                 max_data_age_seconds=self._settings.max_data_age_seconds,
                 quote_currency=self._settings.quote_currency,
+                require_intraday=self._require_intraday,
             )
         except StaleDataError as exc:
             await self._alerter.send(f"{acct}: skipped, {exc}", AlertLevel.WARNING)
@@ -205,7 +210,7 @@ class DecisionCycle:
                 AlertLevel.WARNING,
             )
 
-        risk = self._risk.evaluate(result.proposal, state, decision_id)
+        risk = (account.risk or self._risk).evaluate(result.proposal, state, decision_id)
         self._repo.update_decision(
             decision_id, risk_outcome=risk.outcome.value, risk_reason=risk.reason
         )

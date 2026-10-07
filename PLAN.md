@@ -399,3 +399,12 @@ Recorded so later phases (and later sessions) build on what exists, not just the
 - **One proposal per cycle** (single pair), as in §5.2.
 - Interpretations: buy `size_pct` = % of total equity; sells not size-capped; the model may only
   tighten the stop-loss; trading day = UTC day; equity marked at best bid.
+- **Daily-loss and drawdown halts are reduce-only** (sells allowed, buys blocked). Manual
+  `/stop` and error halts remain a full stop. Found in Phase 3: a full-stop drawdown halt
+  trapped the MA-crossover benchmark in a falling position (33% drawdown instead of 24%).
+- **Benchmarks** share the RiskManager and caps but have no forced stop-loss.
+  `buy_and_hold` = first pair up to the per-pair cap (30%), never sells.
+- **Backtests are daily** (one decision per daily close); Kraken's API gives ~2 years of daily
+  candles, and longer history comes from Kraken's OHLCVT downloads.
+- **Claude Code CLI on the VPS**: Claude Desktop doesn't give scripts a `claude` command, so
+  the CLI is installed with the native installer.

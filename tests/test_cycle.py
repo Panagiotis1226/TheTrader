@@ -190,8 +190,21 @@ async def test_daily_loss_records_halt(h) -> None:
     assert outcome.status is CycleStatus.REJECTED
     assert [x.kind for x in h.repo.active_halts("paper-claude", NOW)] == [HaltKind.DAILY_LOSS]
     assert any("TRADING HALTED" in t for t in h.alerter.texts("critical"))
+    # Reduce-only: the cycle still runs, buys are rejected.
     [again] = await h.cycle.run([acct])
-    assert again.status is CycleStatus.SKIPPED
+    assert again.status is CycleStatus.REJECTED
+    assert "sells only" in again.detail
+
+
+async def test_sell_allowed_during_drawdown_halt(h) -> None:
+    acct = h.account("claude", proposal_json(action="sell", size_pct=100))
+    h.clock.now = NOW - timedelta(hours=2)  # bought earlier (trade-spacing rule)
+    await acct.broker.place_order(OrderRequest("BTC/CAD", Side.BUY, D("0.001")))
+    h.clock.now = NOW
+    h.repo.add_halt(HaltKind.DRAWDOWN, "dd", NOW - timedelta(hours=1), account_id="paper-claude")
+    [outcome] = await h.cycle.run([acct])
+    assert outcome.status is CycleStatus.TRADED
+    assert await acct.broker.get_positions() == []
 
 
 async def test_exchange_outage_skips_whole_cycle(repo, write_env) -> None:
@@ -276,10 +289,18 @@ async def test_run_once_runs_each_configured_model(tmp_path, write_env) -> None:
 
     outcomes = await run_once(config, Mode.PAPER, None, market, None, clock, runner)
     assert outcomes is not None
-    [outcome] = outcomes  # settings.yaml: one model, provider claude_code
-    assert outcome.account_id == "paper-claude"
-    assert outcome.status is CycleStatus.TRADED
-    assert len(runner.calls) == 1
+    by_account = {o.account_id: o for o in outcomes}
+    # settings.yaml: one model (claude_code) plus the three benchmarks
+    assert set(by_account) == {
+        "paper-claude",
+        "paper-buy_and_hold",
+        "paper-ma_crossover",
+        "paper-do_nothing",
+    }
+    assert by_account["paper-claude"].status is CycleStatus.TRADED
+    assert by_account["paper-buy_and_hold"].status is CycleStatus.TRADED
+    assert by_account["paper-do_nothing"].status is CycleStatus.HELD
+    assert len(runner.calls) == 1  # benchmarks never call the model
 
 
 async def test_daily_call_limit_skips(h) -> None:

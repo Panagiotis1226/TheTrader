@@ -33,6 +33,11 @@ class HaltKind(StrEnum):
     ERRORS = "errors"  # repeated cycle failures — until /resume
 
 
+# Automatic risk-limit halts block new buys but still allow sells (reducing exposure).
+# Manual (/stop) and error halts stop all trading.
+REDUCE_ONLY_HALTS = frozenset({HaltKind.DRAWDOWN, HaltKind.DAILY_LOSS})
+
+
 @dataclass(frozen=True)
 class AccountRecord:
     id: str

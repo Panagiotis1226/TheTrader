@@ -30,6 +30,11 @@ llm:
   max_daily_calls: 12                 # per account; 6 scheduled + room for manual runs
   max_daily_cost_usd: 2.00            # per account (claude_code: API-equivalent estimate)
 
+backtest:
+  slippage_pct: 0.10                  # per fill, on top of fees (no historical order books)
+  warmup_days: 50                     # history before the first decision (covers SMA 50)
+  llm_max_decisions: 14               # hard cap for `backtest --with-llm` (usage/cost)
+
 models:                               # each gets its own paper account (paper-<name>)
   # provider claude_code runs `claude -p` on your Claude Team seat (no per-token bill).
   # Needs the Claude Code CLI installed and CLAUDE_CODE_OAUTH_TOKEN in .env.
@@ -39,4 +44,6 @@ models:                               # each gets its own paper account (paper-<
     provider: claude_code
     model: "claude-opus-5-5"
 
+# Rule-based benchmarks (accounts paper-<name>). They use the same RiskManager and caps as
+# the LLM but no forced stop-loss. buy_and_hold buys the first pair only.
 benchmarks: [buy_and_hold, ma_crossover, do_nothing]

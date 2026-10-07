@@ -12,6 +12,9 @@ Interpretation choices:
   are not size-capped, but they still obey halts, confidence, and trade-frequency rules.
 * The LLM may tighten the stop-loss but never loosen it beyond ``default_stop_loss_pct``.
 * The trading day is the UTC day.
+* Halts: manual (/stop) and error halts block every trade. The automatic daily-loss and
+  drawdown halts are reduce-only: buys are rejected, sells still allowed, so a halt never
+  traps the account in a falling position.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ from ai_trader.ai.schema import TradeProposal
 from ai_trader.brokers.base import Broker, OrderRequest, Side
 from ai_trader.config import RiskSettings
 from ai_trader.data.market import OrderBook
-from ai_trader.storage.repo import HaltKind, Repository
+from ai_trader.storage.repo import REDUCE_ONLY_HALTS, HaltKind, Repository
 
 HUNDRED = Decimal(100)
 
@@ -73,11 +76,19 @@ class RiskDecision:
 
 class RiskManager:
     def __init__(
-        self, settings: RiskSettings, allowed_pairs: Collection[str], taker_fee_pct: Decimal
+        self,
+        settings: RiskSettings,
+        allowed_pairs: Collection[str],
+        taker_fee_pct: Decimal,
+        *,
+        stop_loss_required: bool = True,
     ) -> None:
+        """``stop_loss_required=False`` is only for rule-based benchmarks (a buy-and-hold
+        with a forced 5% stop would not be buy-and-hold). LLM accounts always get stops."""
         self._s = settings
         self._pairs = frozenset(allowed_pairs)
         self._fee_rate = taker_fee_pct / HUNDRED
+        self._stop_loss_required = stop_loss_required
 
     def detect_halt(self, state: AccountState) -> HaltKind | None:
         """Return a newly breached limit (drawdown takes precedence), else None."""
@@ -108,7 +119,11 @@ class RiskManager:
 
         halts = [*state.active_halts, *([new_halt] if new_halt else [])]
         if halts:
-            return reject(f"trading halted ({', '.join(h.value for h in halts)})")
+            names = ", ".join(h.value for h in halts)
+            if not all(h in REDUCE_ONLY_HALTS for h in halts):
+                return reject(f"trading halted ({names})")
+            if proposal.action == "buy":
+                return reject(f"trading halted ({names}): sells only")
         if proposal.pair not in self._pairs:
             return reject(f"{proposal.pair} is not a whitelisted pair")
         if proposal.confidence < self._s.min_confidence:
@@ -193,7 +208,7 @@ class RiskManager:
                 halt=new_halt,
             )
 
-        stop_pct = s.default_stop_loss_pct
+        stop_pct: Decimal | None = s.default_stop_loss_pct if self._stop_loss_required else None
         if proposal.stop_loss_pct is not None:
             stop_pct = min(proposal.stop_loss_pct, s.default_stop_loss_pct)
 

@@ -140,14 +140,16 @@ def close_at_or_before(candles: Sequence[Candle], timeframe: str, when: datetime
     return None
 
 
-def _check_fresh(data: PairMarketData, now: datetime, max_age_s: int) -> float:
+def _check_fresh(
+    data: PairMarketData, now: datetime, max_age_s: int, require_intraday: bool
+) -> float:
     age = max(
         (now - data.ticker.received_at).total_seconds(),
         (now - data.book.received_at).total_seconds(),
     )
     if age > max_age_s:
         raise StaleDataError(f"{data.pair}: data is {age:.0f}s old (max {max_age_s}s)")
-    if not data.hourly or data.hourly[-1].opened_at < now - 2 * HOUR:
+    if require_intraday and (not data.hourly or data.hourly[-1].opened_at < now - 2 * HOUR):
         raise StaleDataError(f"{data.pair}: hourly candles are not current")
     if not data.daily or data.daily[-1].opened_at < now - 2 * DAY:
         raise StaleDataError(f"{data.pair}: daily candles are not current")
@@ -167,6 +169,16 @@ def _pair_snapshot(data: PairMarketData, position: Position | None, now: datetim
     def vs(avg: float | None) -> float | None:
         return _round(ind.pct_change(avg, last)) if avg else None
 
+    if hourly:
+        fast: tuple[Sequence[Candle], str] = (hourly, "1h")
+        vol_24h = _round(ind.realized_volatility(hourly_closes[-25:]))
+        vol_7d = _round(ind.realized_volatility(hourly_closes[-169:]))
+    else:
+        # Daily-only data (backtests): changes from daily closes, no 24h volatility.
+        fast = (daily, "1d")
+        vol_24h = None
+        vol_7d = _round(ind.realized_volatility(daily_closes[-8:], periods_per_year=365))
+
     sma20, sma50, sma200 = (ind.sma(daily_closes, n) for n in (20, 50, 200))
     bid, ask = data.book.best_bid, data.book.best_ask
 
@@ -177,11 +189,11 @@ def _pair_snapshot(data: PairMarketData, position: Position | None, now: datetim
     return PairSnapshot(
         pair=data.pair,
         last_price=last,
-        change_24h_pct=change(close_at_or_before(hourly, "1h", now - DAY)),
-        change_7d_pct=change(close_at_or_before(hourly, "1h", now - 7 * DAY)),
+        change_24h_pct=change(close_at_or_before(*fast, now - DAY)),
+        change_7d_pct=change(close_at_or_before(*fast, now - 7 * DAY)),
         change_30d_pct=change(close_at_or_before(daily, "1d", now - 30 * DAY)),
-        volatility_24h_annualized_pct=_round(ind.realized_volatility(hourly_closes[-25:])),
-        volatility_7d_annualized_pct=_round(ind.realized_volatility(hourly_closes[-169:])),
+        volatility_24h_annualized_pct=vol_24h,
+        volatility_7d_annualized_pct=vol_7d,
         sma_20d=_round(sma20),
         sma_50d=_round(sma50),
         sma_200d=_round(sma200),
@@ -231,11 +243,15 @@ def build_snapshot(
     now: datetime,
     max_data_age_seconds: int,
     quote_currency: str = "CAD",
+    require_intraday: bool = True,
 ) -> MarketSnapshot:
-    """Pure function: validate freshness, compute indicators, assemble the snapshot."""
+    """Pure function: validate freshness, compute indicators, assemble the snapshot.
+
+    ``require_intraday=False`` is for backtests, which only have daily candles.
+    """
     if not data:
         raise MarketDataError("no market data")
-    ages = [_check_fresh(d, now, max_data_age_seconds) for d in data.values()]
+    ages = [_check_fresh(d, now, max_data_age_seconds, require_intraday) for d in data.values()]
 
     by_pair = {p.pair: p for p in positions}
     missing = set(by_pair) - set(data)

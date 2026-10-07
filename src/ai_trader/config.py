@@ -191,6 +191,13 @@ class ModelSettings(_StrictModel):
         return self
 
 
+class BacktestSettings(_StrictModel):
+    # Historical order books don't exist: fills use the candle price +/- this slippage.
+    slippage_pct: Annotated[Decimal, Field(ge=0, lt=10)]
+    warmup_days: Annotated[int, Field(ge=0)]  # history before the first decision
+    llm_max_decisions: Annotated[int, Field(ge=1)]  # cap for --with-llm runs
+
+
 class TradingSettings(_StrictModel):
     pairs: Annotated[list[str], Field(min_length=1)]
     quote_currency: Annotated[str, Field(pattern=r"^[A-Z]{3,5}$")]
@@ -199,6 +206,7 @@ class TradingSettings(_StrictModel):
     paper: PaperSettings
     risk: RiskSettings
     llm: LLMSettings
+    backtest: BacktestSettings
     models: list[ModelSettings] = Field(default_factory=list)
     benchmarks: list[BenchmarkName] = Field(default_factory=list)
 

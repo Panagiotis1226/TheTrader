@@ -4,23 +4,35 @@ Startup order: load + validate config → mode guard → command.
 The mode guard runs before anything that could touch an exchange.
 
 Commands:
-  (none)  validate config and exit (the scheduler arrives in Phase 4)
-  once    run one decision cycle for every configured model's paper account
+  (none)    validate config and exit (the scheduler arrives in Phase 4)
+  once      run one decision cycle for every paper account (models + benchmarks)
+  backtest  replay daily Kraken candles through the decision path (benchmarks; --with-llm)
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from collections.abc import Collection
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ai_trader.ai.agent import CompletionFn, DecisionMaker, LLMAgent
 from ai_trader.ai.claude_code import ClaudeCodeAgent, Runner, run_subprocess
 from ai_trader.ai.prompt import render_system_prompt
 from ai_trader.alerts.base import LogAlerter
+from ai_trader.backtest.data import (
+    DEFAULT_CANDLES_DIR,
+    candles_path,
+    load_market_infos,
+    read_candles_csv,
+    refresh_candles,
+    save_market_infos,
+)
+from ai_trader.backtest.engine import BacktestEngine, BacktestReport, format_reports
 from ai_trader.brokers.paper import PaperBroker
 from ai_trader.config import (
     DEFAULT_ENV_FILE,
@@ -28,12 +40,14 @@ from ai_trader.config import (
     ConfigError,
     EnvSettings,
     Mode,
+    ModelSettings,
     load_config,
 )
 from ai_trader.cycle import CycleOutcome, CycleStatus, DecisionCycle, TradingAccount
 from ai_trader.data.market import Clock, MarketData, utcnow
 from ai_trader.risk.manager import RiskManager
 from ai_trader.storage.repo import Repository
+from ai_trader.strategies import build_benchmark
 
 log = logging.getLogger("ai_trader")
 
@@ -86,9 +100,54 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="append",
         dest="models",
         metavar="NAME",
-        help="only this model (repeatable); default: all configured models",
+        help="only this account name (repeatable); default: all models and benchmarks",
     )
+    bt = sub.add_parser("backtest", help="replay daily candles through the decision path")
+    bt.add_argument("--start", type=_utc_date, help="first decision day, YYYY-MM-DD")
+    bt.add_argument("--end", type=_utc_date, help="last decision day, YYYY-MM-DD")
+    bt.add_argument(
+        "--strategy",
+        action="append",
+        dest="strategies",
+        metavar="NAME",
+        help="benchmark to run (repeatable); default: all configured benchmarks",
+    )
+    bt.add_argument(
+        "--with-llm",
+        action="store_true",
+        help="also run the configured models over the last backtest.llm_max_decisions days "
+        "(plumbing check only: LLM backtests suffer from look-ahead bias)",
+    )
+    bt.add_argument(
+        "--llm-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="with --with-llm: run the models over the last N days (max llm_max_decisions)",
+    )
+    bt.add_argument("--refresh-data", action="store_true", help="fetch the latest candles")
+    bt.add_argument("--candles-dir", type=Path, default=DEFAULT_CANDLES_DIR)
+    bt.add_argument("--out", type=Path, default=Path("data/backtests"))
     return parser.parse_args(argv)
+
+
+def _utc_date(text: str) -> datetime:
+    return datetime.strptime(text, "%Y-%m-%d").replace(tzinfo=UTC)
+
+
+def build_agent(
+    model: ModelSettings,
+    config: AppConfig,
+    system_prompt: str,
+    completion_fn: CompletionFn | None = None,
+    runner: Runner = run_subprocess,
+) -> DecisionMaker:
+    trading = config.trading
+    if model.provider == "claude_code":
+        return ClaudeCodeAgent(
+            model, trading.llm, config.env, system_prompt, trading.pairs[0], runner
+        )
+    return LLMAgent(model, trading.llm, config.env, system_prompt, trading.pairs[0], completion_fn)
 
 
 def build_paper_accounts(
@@ -100,18 +159,17 @@ def build_paper_accounts(
     clock: Clock = utcnow,
     runner: Runner = run_subprocess,
 ) -> list[TradingAccount]:
-    """One paper account per configured LLM (``paper-<name>``). Placeholders are skipped."""
+    """One paper account per configured model and per benchmark (``paper-<name>``).
+
+    Placeholder model IDs are skipped. Benchmarks use the same RiskManager rules but no
+    forced stop-loss (see strategies/).
+    """
     trading = config.trading
     system_prompt = render_system_prompt(trading)
-    accounts = []
-    for model in trading.models:
-        if only and model.name not in only:
-            continue
-        if model.is_placeholder:
-            log.warning("Skipping model %r: placeholder ID %r", model.name, model.model)
-            continue
-        broker = PaperBroker(
-            f"paper-{model.name}",
+
+    def broker(name: str) -> PaperBroker:
+        return PaperBroker(
+            f"paper-{name}",
             repo=repo,
             market=market,
             allowed_pairs=trading.pairs,
@@ -120,16 +178,28 @@ def build_paper_accounts(
             quote_currency=trading.quote_currency,
             clock=clock,
         )
-        agent: DecisionMaker
-        if model.provider == "claude_code":
-            agent = ClaudeCodeAgent(
-                model, trading.llm, config.env, system_prompt, trading.pairs[0], runner
+
+    accounts = []
+    for model in trading.models:
+        if only and model.name not in only:
+            continue
+        if model.is_placeholder:
+            log.warning("Skipping model %r: placeholder ID %r", model.name, model.model)
+            continue
+        agent = build_agent(model, config, system_prompt, completion_fn, runner)
+        accounts.append(TradingAccount(broker=broker(model.name), decider=agent))
+
+    benchmark_risk = RiskManager(
+        trading.risk, trading.pairs, trading.paper.taker_fee_pct, stop_loss_required=False
+    )
+    for name in trading.benchmarks:
+        if only and name not in only:
+            continue
+        accounts.append(
+            TradingAccount(
+                broker=broker(name), decider=build_benchmark(name, trading), risk=benchmark_risk
             )
-        else:
-            agent = LLMAgent(
-                model, trading.llm, config.env, system_prompt, trading.pairs[0], completion_fn
-            )
-        accounts.append(TradingAccount(broker=broker, decider=agent))
+        )
     return accounts
 
 
@@ -159,6 +229,85 @@ async def run_once(
         return await cycle.run(accounts)
     finally:
         await market.close()
+
+
+async def load_backtest_data(config: AppConfig, candles_dir: Path, refresh: bool):
+    """Daily candles + market metadata, from the local cache (fetched when missing)."""
+    pairs = config.trading.pairs
+    need_fetch = refresh or not (candles_dir / "markets.json").exists()
+    need_fetch = need_fetch or any(not candles_path(candles_dir, p).exists() for p in pairs)
+    if need_fetch:
+        log.info("Fetching daily candles and market info from Kraken into %s", candles_dir)
+        async with MarketData() as market:
+            save_market_infos(candles_dir, {p: await market.market_info(p) for p in pairs})
+            for pair in pairs:
+                await refresh_candles(market, pair, candles_dir, utcnow())
+    candles = {p: read_candles_csv(candles_path(candles_dir, p)) for p in pairs}
+    return candles, load_market_infos(candles_dir)
+
+
+async def run_backtest(
+    config: AppConfig,
+    args: argparse.Namespace,
+    completion_fn: CompletionFn | None = None,
+    runner: Runner = run_subprocess,
+) -> list[BacktestReport]:
+    trading = config.trading
+    candles, infos = await load_backtest_data(config, args.candles_dir, args.refresh_data)
+    for pair, series in candles.items():
+        log.info(
+            "%s: %d daily candles, %s -> %s",
+            pair,
+            len(series),
+            series[0].opened_at.date(),
+            series[-1].opened_at.date(),
+        )
+    engine = BacktestEngine(trading, candles, infos, start=args.start, end=args.end)
+
+    results = []
+    for name in args.strategies or trading.benchmarks:
+        log.info("Backtesting benchmark %s over %d days", name, len(engine.steps))
+        results.append(await engine.run(build_benchmark(name, trading), stop_loss_required=False))
+    if args.with_llm:
+        cap = trading.backtest.llm_max_decisions
+        llm_days = min(args.llm_days or cap, cap)
+        log.warning(
+            "LLM backtest = plumbing check only: the model may have seen these prices in "
+            "training (look-ahead bias). Running %d decisions per model.",
+            llm_days,
+        )
+        system_prompt = render_system_prompt(trading)
+        for model in trading.models:
+            if model.is_placeholder:
+                continue
+            agent = build_agent(model, config, system_prompt, completion_fn, runner)
+            results.append(
+                await engine.run(
+                    agent,
+                    stop_loss_required=True,
+                    max_decisions=llm_days,
+                )
+            )
+
+    reports = [r.report for r in results]
+    print(format_reports(reports))
+    args.out.mkdir(parents=True, exist_ok=True)
+    path = args.out / f"backtest-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    **r.report.as_dict(),
+                    "equity_curve": [[t.isoformat(), str(e)] for t, e in r.equity_curve],
+                }
+                for r in results
+            ],
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
+    print(f"\nSaved to {path}")
+    return reports
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -207,6 +356,10 @@ def main(argv: list[str] | None = None) -> int:
         if all(o.status is CycleStatus.ERROR for o in outcomes):
             return EXIT_CYCLE_FAILED
         return EXIT_OK
+
+    if args.command == "backtest":
+        reports = asyncio.run(run_backtest(config, args))
+        return EXIT_OK if reports else EXIT_CYCLE_FAILED
 
     # The scheduler is added in Phase 4.
     return EXIT_OK
