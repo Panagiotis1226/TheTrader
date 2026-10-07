@@ -38,6 +38,13 @@ monitoring:
   equity_snapshot_minutes: 60
   max_consecutive_errors: 3           # failed cycles in a row -> halt until /resume
 
+evaluation:                           # PLAN.md section 8, decided in advance; don't move
+  llm_account: claude                 # the model account being judged
+  min_weeks: 8
+  min_trades: 50
+  match_tolerance_pct: 1.0            # "matches buy-and-hold": within 1 point of its return
+  drawdown_improvement_pct: 25        # ...and a max drawdown at least 25% lower
+
 backtest:
   slippage_pct: 0.10                  # per fill, on top of fees (no historical order books)
   warmup_days: 50                     # history before the first decision (covers SMA 50)

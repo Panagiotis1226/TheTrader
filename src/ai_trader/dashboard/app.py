@@ -6,6 +6,9 @@ In Docker it listens on 127.0.0.1:8501 only; reach it through an SSH tunnel.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+
 import altair as alt
 import streamlit as st
 
@@ -19,6 +22,7 @@ from ai_trader.dashboard.data import (
     llm_cost_by_day,
     rejections_frame,
 )
+from ai_trader.evaluation import scorecard
 from ai_trader.storage.repo import Repository
 
 # Categorical slots in fixed order (validated for color-vision deficiencies); the color
@@ -26,6 +30,10 @@ from ai_trader.storage.repo import Repository
 SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300"]
 
 st.set_page_config(page_title="AI Trader", layout="wide")
+
+
+def _dec(value: float) -> Decimal:
+    return Decimal(str(value))
 
 
 @st.cache_resource
@@ -54,6 +62,26 @@ if latest.empty:
     st.info("No accounts yet. Run `ai-trader once` or start the bot.")
     st.stop()
 
+now = datetime.now(UTC)
+halts = repo.active_halts(None, now)
+if halts:
+    for h in halts:
+        st.error(
+            f"TRADING HALTED ({h.kind.value}) since {h.created_at:%Y-%m-%d %H:%M} UTC: "
+            f"{h.reason}. Run `ai-trader resume` to lift."
+        )
+last_decisions = repo.list_decisions(limit=1)
+if last_decisions:
+    last_at = last_decisions[0]["created_at"]
+    age = now - last_at
+    status = "Trading active" if not halts else "Halted"
+    minutes = int(age.total_seconds() // 60)
+    msg = f"{status}. Last decision {last_at:%Y-%m-%d %H:%M} UTC ({minutes} min ago)."
+    if age > timedelta(minutes=2 * settings.decision_interval_minutes + 30):
+        st.warning(msg + " That's older than expected: is the bot running?")
+    else:
+        st.caption(msg)
+
 # Headline tiles: one per account.
 cols = st.columns(len(latest))
 for col, (_, row) in zip(cols, latest.set_index("account").loc[accounts].iterrows(), strict=False):
@@ -64,7 +92,7 @@ st.subheader("Return since start (%)")
 hover = alt.selection_point(fields=["time"], nearest=True, on="pointerover", empty=False)
 base = alt.Chart(equity).encode(
     x=alt.X("time:T", title=None),
-    y=alt.Y("return_pct:Q", title="Return %"),
+    y=alt.Y("return_pct:Q", title="Return %", axis=alt.Axis(format=".1f")),
     color=alt.Color("account:N", scale=colors, legend=alt.Legend(orient="top", title=None)),
 )
 lines = base.mark_line(strokeWidth=2)
@@ -85,6 +113,24 @@ zero = alt.Chart().mark_rule(color="#a8a7a0", strokeDash=[4, 4]).encode(y=alt.da
 st.altair_chart((zero + lines + points), use_container_width=True)
 with st.expander("Table view"):
     st.dataframe(latest, hide_index=True, use_container_width=True)
+
+st.subheader("Phase 5 evaluation")
+card = scorecard(
+    settings, repo, dict(zip(latest["account"], map(_dec, latest["equity"]), strict=True)), now
+)
+if card.start is None:
+    st.caption("Not started: no answer from the model with the current configuration yet.")
+else:
+    st.caption(
+        f"Since {card.start:%Y-%m-%d} ({card.weeks} weeks), configuration {card.fingerprint}. "
+        "Changing the prompt or risk settings restarts the clock."
+    )
+st.dataframe(
+    [{"criterion": c.name, "verdict": c.verdict.value, "detail": c.detail} for c in card.criteria],
+    hide_index=True,
+    use_container_width=True,
+    column_config={"detail": st.column_config.TextColumn(width="large")},
+)
 
 decisions = decisions_frame(repo)
 
@@ -138,6 +184,19 @@ st.dataframe(
         "risk_reason": st.column_config.TextColumn(width="medium"),
     },
 )
+
+st.subheader("Recent alerts")
+alerts = repo.recent_alerts(50)
+if alerts:
+    st.dataframe(
+        [{"time": t, "level": lv, "alert": text} for t, lv, text in alerts],
+        hide_index=True,
+        use_container_width=True,
+        height=260,
+        column_config={"time": TIME, "alert": st.column_config.TextColumn(width="large")},
+    )
+else:
+    st.caption("No alerts yet.")
 
 st.subheader("LLM cost per day (USD, API-equivalent for Claude Code)")
 cost = llm_cost_by_day(decisions)

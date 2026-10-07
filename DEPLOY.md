@@ -55,7 +55,8 @@ mkdir -p data && sudo chown 1000:1000 data     # the container runs as uid 1000
 cp .env.example .env && chmod 600 .env && nano .env
 ```
 
-Keep `MODE=paper` and `LIVE_TRADING_CONFIRMED=no`. Fill in:
+Keep `MODE=paper` and `LIVE_TRADING_CONFIRMED=no`. Only the Claude token is required;
+Telegram and healthchecks.io are optional.
 
 **`CLAUDE_CODE_OAUTH_TOKEN`**: lets the bot use your Claude Team seat. On your own computer
 (it needs a browser), install the Claude Code CLI and create a token:
@@ -67,14 +68,15 @@ claude setup-token                                 # sign in, copy the token it 
 
 The token is valid for a year; put a reminder in your calendar to renew it.
 
-**`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`**: alerts and the kill switch.
+**`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`** (optional): alerts on your phone and remote
+commands. Without them, use `ai-trader status` / `stop` / `resume` on the server.
 1. In Telegram, message **@BotFather**, send `/newbot`, and copy the token.
 2. Open a **private** chat with your new bot and send it any message. (Don't use a group:
    every member could send `/stop`.)
 3. Open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser; `"chat":{"id": ...}`
    is your chat ID.
 
-**`HEALTHCHECK_URL`**: tells you if the bot stops running. At <https://healthchecks.io>,
+**`HEALTHCHECK_URL`** (optional): emails you if the bot stops running. At <https://healthchecks.io>,
 create a check with **period 4 hours** (the decision interval) and **grace 1 hour**, add your
 email or Telegram as an alert channel, and copy its ping URL.
 
@@ -87,8 +89,9 @@ docker compose up -d --build
 docker compose logs -f bot        # Ctrl-C to stop following
 ```
 
-Within a minute you should get a Telegram message *"ai-trader started (paper)…"*, then the
-first decision cycle runs. Send `/status` to the bot.
+Within a minute the first decision cycle runs. Check it with
+`docker compose exec bot ai-trader status` (or `/status` in Telegram if configured).
+Day-to-day use is in [`USAGE.md`](USAGE.md).
 
 ## 7. Dashboard (through an SSH tunnel)
 
@@ -104,8 +107,8 @@ Then open <http://localhost:8501>. Close the SSH session to close the tunnel.
 
 | | |
 |---|---|
-| Kill switch | Telegram `/stop`: halts all trading at once and cancels open orders. Stop-losses stay active. `/resume` lifts all halts. |
-| Status | `/status`, `/equity`; daily summary at 08:00 Quebec time, weekly report on Mondays |
+| Kill switch | `docker compose exec bot ai-trader stop` (or Telegram `/stop`): halts all trading at once and cancels open orders. Stop-losses stay active. `ai-trader resume` lifts all halts. |
+| Status | `docker compose exec bot ai-trader status` / `report` / `evaluate` (or `/status`, `/equity`); daily summary at 08:00 Quebec time, weekly report on Mondays |
 | Logs | `docker compose logs --tail 200 bot` |
 | Stop / start the bot | `docker compose stop bot` / `docker compose start bot` |
 | One-off cycle | `docker compose exec bot ai-trader once` |
@@ -115,8 +118,8 @@ Restarts: if the bot crashes, Docker restarts it within seconds and it carries o
 database. A container you stop yourself (`docker compose stop`, `docker kill`) stays stopped
 until you start it. After a server reboot everything comes back on its own.
 
-If an account fails 3 cycles in a row, the bot halts it and tells you on Telegram; fix the
-cause (logs), then `/resume`.
+If an account fails 3 cycles in a row, the bot halts it and raises an alert (`status`,
+dashboard, Telegram if configured); fix the cause (logs), then `ai-trader resume`.
 
 ## 9. Updates
 

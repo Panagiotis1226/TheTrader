@@ -7,8 +7,10 @@ proposal. Paper and live trading share one code path; only the broker changes.
 The goal is to find out whether an LLM can trade profitably **in paper trading** before any real
 money is used. See [`PLAN.md`](PLAN.md) for the full design and phase plan.
 
-> **Status:** Phase 4 done — runs unattended in Docker with Telegram alerts and kill
-> switch, a heartbeat, and a dashboard. See [`DEPLOY.md`](DEPLOY.md) to put it on a VPS.
+> **Status:** Phase 5 ready — the bot runs unattended (Docker), is controlled from the
+> machine (`ai-trader status` / `stop` / `resume` / `evaluate`, optional Telegram), and
+> tracks the paper-trading evaluation. **How to use it: [`USAGE.md`](USAGE.md).** To put it
+> on a VPS: [`DEPLOY.md`](DEPLOY.md).
 
 ## Safety
 
@@ -35,7 +37,10 @@ cp .env.example .env          # leave MODE=paper
 pytest && ruff check . && ruff format --check .
 ai-trader                     # validates config, runs the mode guard, exits
 python scripts/print_snapshot.py BTC/CAD   # live MarketSnapshot from Kraken public data
-ai-trader run                 # unattended: scheduler, Telegram, heartbeat (Ctrl-C to stop)
+ai-trader run                 # unattended: scheduler, alerts (Ctrl-C to stop)
+ai-trader status              # accounts, halts, last decision, alerts, evaluation progress
+ai-trader stop | resume       # kill switch / lift halts (works while the bot runs)
+ai-trader report | evaluate   # performance report / Phase 5 go-live scorecard
 ai-trader once                # one decision cycle for every paper account
 ai-trader once --model claude # just one account
 ai-trader backtest            # benchmarks over the cached daily history
@@ -122,8 +127,12 @@ order books, run the RiskManager, place the order if approved, alert.
 - a stop-loss check every minute and an equity snapshot every hour;
 - a daily summary at 08:00 and a weekly report on Mondays (Quebec time, `monitoring:`).
 
-**Telegram** (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`): every trade, risk rejection, halt,
-error and report is sent to your chat. Commands are accepted from that chat only:
+**Alerts** for every trade, risk rejection, halt, error and report go to the log and the
+database (`ai-trader status`, dashboard). **Local control**: `ai-trader stop` / `resume`
+work alongside the running bot through the database.
+
+**Telegram** (optional; `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`): the same alerts on your
+phone, plus these commands, accepted from that chat only:
 
 | | |
 |---|---|
@@ -138,8 +147,13 @@ cycles in a row halt that account (or everything, if the whole cycle fails) unti
 failure.
 
 **Dashboard:** `streamlit run src/ai_trader/dashboard/app.py` (in Docker: localhost:8501 via
-an SSH tunnel). Shows return curves for all accounts, trades, the decision log with the
-model's reasoning, risk rejections, and LLM cost per day.
+an SSH tunnel). Shows status, return curves for all accounts, the Phase 5 scorecard, trades,
+the decision log with the model's reasoning, risk rejections, alerts, and LLM cost per day.
+
+**Phase 5 evaluation:** `ai-trader evaluate` scores Claude against PLAN.md §8 over the
+evaluation window, which starts at Claude's first real answer and restarts automatically
+if the prompt or any risk/fee setting changes. Thresholds: `evaluation:` in
+`settings.yaml`. See [`USAGE.md`](USAGE.md) §7.
 
 ## Benchmarks
 

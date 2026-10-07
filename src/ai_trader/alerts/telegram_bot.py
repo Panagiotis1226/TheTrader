@@ -4,8 +4,8 @@
   logged. Use a private chat with the bot: in a group, every member could send /stop.
 * Messages are sent as plain text (no Markdown/HTML parsing), so text from the model or
   the market can't inject formatting or links.
-* Sending never raises: a Telegram outage must not break a trading cycle. Every alert is
-  also written to the log.
+* Sending never raises: a Telegram outage must not break a trading cycle. Telegram is
+  optional; alerts always go to the log and the database too (``MultiAlerter``).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
-from ai_trader.alerts.base import AlertLevel, LogAlerter
+from ai_trader.alerts.base import AlertLevel
 
 log = logging.getLogger(__name__)
 
@@ -30,15 +30,13 @@ class TelegramAlerter:
     def __init__(self, bot: _Bot, chat_id: int) -> None:
         self._bot = bot
         self._chat_id = chat_id
-        self._log = LogAlerter()
 
     async def send(self, text: str, level: AlertLevel = AlertLevel.INFO) -> None:
-        await self._log.send(text, level)
         message = (_PREFIX[level] + text)[:MAX_MESSAGE_CHARS]
         try:
             await self._bot.send_message(chat_id=self._chat_id, text=message)
         except Exception as exc:
-            log.error("Telegram send failed (%s); alert was logged only", type(exc).__name__)
+            log.error("Telegram send failed (%s); alert kept in log/database", type(exc).__name__)
 
 
 CommandFn = Callable[[], Awaitable[str]]

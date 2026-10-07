@@ -236,3 +236,17 @@ async def test_status_equity_help(h) -> None:
     assert "paper-claude:" in await svc.cmd_equity()
     assert "/stop" in await svc.cmd_help()
     assert set(svc.commands()) == set(TradingService.COMMANDS)
+
+
+async def test_error_halt_repeats_after_external_resume(h) -> None:
+    bad = TradingAccount(broker=h.broker("bad"), decider=Exploding())
+    svc, _ = service(h, [bad])
+    for _ in range(3):
+        await svc.run_cycle()
+    assert len(h.repo.active_halts("paper-bad", NOW)) == 1
+
+    # `ai-trader resume` from another process: the service's error counter stays at 3,
+    # so the next failure is the 4th in a row and must halt again.
+    h.repo.resume(NOW)
+    await svc.run_cycle()
+    assert [x.kind for x in h.repo.active_halts("paper-bad", NOW)] == [HaltKind.ERRORS]

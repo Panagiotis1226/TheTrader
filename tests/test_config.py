@@ -93,7 +93,8 @@ def test_placeholder_models_detected() -> None:
             models=[
                 {"name": "a", "provider": "litellm", "model": "anthropic/<model-id>"},
                 {"name": "b", "provider": "litellm", "model": "openai/some-real-model"},
-            ]
+            ],
+            evaluation__llm_account="a",
         )
     )
     assert [m.is_placeholder for m in s.models] == [True, False]
@@ -144,7 +145,18 @@ def test_placeholder_models_detected() -> None:
             ),
             "model names must be unique",
         ),
-        (_with(models=[{"name": "do_nothing", "provider": "litellm", "model": "a/b"}]), "clash"),
+        (
+            _with(
+                models=[{"name": "do_nothing", "provider": "litellm", "model": "a/b"}],
+                evaluation__llm_account="do_nothing",
+            ),
+            "clash",
+        ),
+        (
+            _with(evaluation__llm_account="gpt"),
+            "evaluation.llm_account 'gpt' is not a configured model",
+        ),
+        (_with(evaluation__min_weeks=0), "min_weeks"),
         (_with(models=[{"name": "Bad Name", "provider": "litellm", "model": "a/b"}]), "name"),
     ],
 )

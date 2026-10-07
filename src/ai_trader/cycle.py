@@ -243,6 +243,11 @@ class DecisionCycle:
                 acct, CycleStatus.ORDER_FAILED, order.reason or "rejected", decision_id
             )
 
+        try:  # keep equity history current after a trade (fee and spread just paid)
+            after = await broker.get_equity(self._settings.quote_currency)
+            self._repo.record_equity(acct, self._clock(), after, broker.cash)
+        except Exception:
+            log.exception("%s: post-trade equity snapshot failed", acct)
         await self._alerter.send(
             f"{acct}: {risk.order.side.value.upper()} {order.filled_amount} {risk.order.pair} "
             f"@ {order.avg_price:,.2f} = {order.cost:,.2f} + fee {order.fee:.2f} "

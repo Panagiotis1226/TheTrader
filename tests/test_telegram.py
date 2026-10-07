@@ -72,7 +72,6 @@ async def test_alerter_never_raises(caplog) -> None:
     alerter = TelegramAlerter(FakeBot(fail=True), OWNER)
     with caplog.at_level(logging.INFO):
         await alerter.send("trade happened")
-    assert "ALERT: trade happened" in caplog.text  # still logged
     assert "Telegram send failed" in caplog.text
 
 

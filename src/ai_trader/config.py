@@ -218,6 +218,18 @@ class MonitoringSettings(_StrictModel):
         return value
 
 
+class EvaluationSettings(_StrictModel):
+    """Go-live criteria (PLAN.md section 8), fixed before the evaluation starts."""
+
+    llm_account: Annotated[str, Field(pattern=_ACCOUNT_NAME_RE)]  # model name being judged
+    min_weeks: Annotated[int, Field(ge=1)]
+    min_trades: Annotated[int, Field(ge=1)]
+    # "Matches buy-and-hold": return within this many percentage points of it...
+    match_tolerance_pct: Annotated[Decimal, Field(ge=0)]
+    # ...with a max drawdown at least this much (relative) lower than buy-and-hold's.
+    drawdown_improvement_pct: Annotated[Decimal, Field(ge=0, le=100)]
+
+
 class TradingSettings(_StrictModel):
     pairs: Annotated[list[str], Field(min_length=1)]
     quote_currency: Annotated[str, Field(pattern=r"^[A-Z]{3,5}$")]
@@ -228,6 +240,7 @@ class TradingSettings(_StrictModel):
     llm: LLMSettings
     backtest: BacktestSettings
     monitoring: MonitoringSettings
+    evaluation: EvaluationSettings
     models: list[ModelSettings] = Field(default_factory=list)
     benchmarks: list[BenchmarkName] = Field(default_factory=list)
 
@@ -259,6 +272,10 @@ class TradingSettings(_StrictModel):
             raise ValueError("model names must be unique")
         if len(set(self.benchmarks)) != len(self.benchmarks):
             raise ValueError("benchmarks must be unique")
+        if self.models and self.evaluation.llm_account not in model_names:
+            raise ValueError(
+                f"evaluation.llm_account {self.evaluation.llm_account!r} is not a configured model"
+            )
         clash = set(model_names) & set(self.benchmarks)
         if clash:
             raise ValueError(f"model names clash with benchmark names: {sorted(clash)}")

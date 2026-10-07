@@ -17,6 +17,7 @@ from sqlalchemy.orm import sessionmaker
 from ai_trader.brokers.base import Fill, Order, OrderStatus, OrderType, Side
 from ai_trader.storage.models import (
     AccountRow,
+    AlertRow,
     Base,
     DecisionRow,
     EquitySnapshotRow,
@@ -218,6 +219,10 @@ class Repository:
                 .values(status=status.value, reason=reason, updated_at=now)
             )
 
+    def order_ids(self, account_id: str) -> set[str]:
+        with self._sessions() as s:
+            return set(s.scalars(select(OrderRow.id).where(OrderRow.account_id == account_id)))
+
     def open_orders(self, account_id: str) -> list[Order]:
         with self._sessions() as s:
             rows = s.scalars(
@@ -291,6 +296,16 @@ class Repository:
         with self._sessions() as s:
             rows = s.scalars(
                 select(DecisionRow).order_by(DecisionRow.created_at.desc()).limit(limit)
+            ).all()
+            return [{c.key: getattr(r, c.key) for c in DecisionRow.__table__.columns} for r in rows]
+
+    def account_decisions(self, account_id: str) -> list[dict[str, Any]]:
+        """All decisions of one account, oldest first."""
+        with self._sessions() as s:
+            rows = s.scalars(
+                select(DecisionRow)
+                .where(DecisionRow.account_id == account_id)
+                .order_by(DecisionRow.created_at, DecisionRow.id)
             ).all()
             return [{c.key: getattr(r, c.key) for c in DecisionRow.__table__.columns} for r in rows]
 
@@ -476,6 +491,30 @@ class Repository:
                     or_(HaltRow.account_id.is_(None), HaltRow.account_id == account_id),
                 )
             )
+
+    def halt_history(self, since: datetime | None = None) -> list[HaltRecord]:
+        """All halts ever recorded (lifted or not), oldest first."""
+        with self._sessions() as s:
+            q = select(HaltRow).order_by(HaltRow.created_at)
+            if since is not None:
+                q = q.where(HaltRow.created_at >= since)
+            return [_halt_from_row(r) for r in s.scalars(q)]
+
+    # -------------------------------------------------------------------- alerts
+
+    def add_alert(self, level: str, text: str, now: datetime) -> None:
+        with self._sessions.begin() as s:
+            s.add(AlertRow(created_at=now, level=level, text=text))
+
+    def recent_alerts(self, limit: int = 20) -> list[tuple[datetime, str, str]]:
+        """(time, level, text), newest first."""
+        with self._sessions() as s:
+            rows = s.scalars(
+                select(AlertRow)
+                .order_by(AlertRow.created_at.desc(), AlertRow.id.desc())
+                .limit(limit)
+            )
+            return [(r.created_at, r.level, r.text) for r in rows]
 
     # ----------------------------------------------------------------------- tax
 

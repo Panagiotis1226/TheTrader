@@ -116,7 +116,10 @@ async def test_a_valid_buy_is_traded_and_fully_logged(h) -> None:
     assert stop.type is OrderType.STOP_LOSS
     assert stop.trigger_price < fill.price * D("0.951")  # default 5% stop
     assert any("BUY" in t for t in h.alerter.texts())
-    assert h.repo.equity_at_or_before("paper-claude", NOW) == D(10000)
+    # Snapshots before and after the trade: the second one includes fee and spread.
+    series = h.repo.equity_series("paper-claude")
+    assert series[0][1] == D(10000)
+    assert series[-1][1] < D(10000) - fill.fee + D(1)
 
 
 async def test_b_garbage_is_held_logged_and_alerted(h) -> None:

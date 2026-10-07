@@ -37,6 +37,7 @@ from ai_trader.cycle import (
     TradingAccount,
 )
 from ai_trader.data.market import Clock, utcnow
+from ai_trader.evaluation import format_scorecard, scorecard
 from ai_trader.reports import (
     AccountReport,
     account_report,
@@ -179,7 +180,11 @@ class TradingService:
 
     async def weekly_report(self) -> None:
         reports = await self.reports()
-        await self._alerter.send(format_weekly_report(reports, self._clock()))
+        now = self._clock()
+        card = scorecard(self._s, self._repo, {r.account_id: r.equity for r in reports}, now)
+        await self._alerter.send(
+            format_weekly_report(reports, now) + "\n\n" + format_scorecard(card)
+        )
 
     async def reports(self) -> list[AccountReport]:
         now = self._clock()
@@ -220,7 +225,13 @@ class TradingService:
                 continue
             n = self._account_errors.get(o.account_id, 0) + 1
             self._account_errors[o.account_id] = n
-            if n == limit:
+            already = any(
+                h.kind is HaltKind.ERRORS and h.account_id == o.account_id
+                for h in self._repo.active_halts(o.account_id, self._clock())
+            )
+            # >= (not ==): after a /resume from another process the counter may already
+            # be past the limit, and the account must still be halted again.
+            if n >= limit and not already:
                 reason = f"{n} failed cycles in a row (last: {o.detail})"
                 record_halt(self._repo, o.account_id, HaltKind.ERRORS, reason, self._clock())
                 await self._alerter.send(

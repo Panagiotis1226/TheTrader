@@ -5,7 +5,12 @@ The mode guard runs before anything that could touch an exchange.
 
 Commands:
   (none)    validate config and exit
-  run       run unattended: scheduler, Telegram alerts and commands, heartbeat
+  run       run unattended: scheduler, alerts, optional Telegram and heartbeat
+  status    accounts, halts, last decision, recent alerts, evaluation progress
+  stop      KILL SWITCH: halt all trading now (stop-losses stay active)
+  resume    lift all halts
+  report    performance report for every account
+  evaluate  Phase 5 go-live scorecard (PLAN.md section 8)
   once      run one decision cycle for every paper account (models + benchmarks)
   backtest  replay daily Kraken candles through the decision path (benchmarks; --with-llm)
 """
@@ -23,10 +28,11 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ai_trader import control
 from ai_trader.ai.agent import CompletionFn, DecisionMaker, LLMAgent
 from ai_trader.ai.claude_code import ClaudeCodeAgent, Runner, run_subprocess
 from ai_trader.ai.prompt import render_system_prompt
-from ai_trader.alerts.base import Alerter, LogAlerter
+from ai_trader.alerts.base import Alerter, AlertLevel, DbAlerter, LogAlerter, MultiAlerter
 from ai_trader.alerts.heartbeat import Heartbeat
 from ai_trader.alerts.telegram_bot import CommandRouter, TelegramAlerter, TelegramBot
 from ai_trader.backtest.data import (
@@ -50,6 +56,7 @@ from ai_trader.config import (
 )
 from ai_trader.cycle import CycleOutcome, CycleStatus, DecisionCycle, TradingAccount
 from ai_trader.data.market import Clock, MarketData, utcnow
+from ai_trader.evaluation import config_change_notice
 from ai_trader.risk.manager import RiskManager
 from ai_trader.service import TradingService
 from ai_trader.storage.repo import Repository
@@ -100,7 +107,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="settings YAML (default: SETTINGS_PATH or config/settings.yaml)",
     )
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("run", help="run unattended (scheduler, Telegram, heartbeat)")
+    sub.add_parser("run", help="run unattended (scheduler, alerts, optional Telegram)")
+    sub.add_parser("status", help="accounts, halts, last decision, recent alerts")
+    stop = sub.add_parser("stop", help="KILL SWITCH: halt all trading (stop-losses stay)")
+    stop.add_argument("--reason", default="stopped locally from the command line")
+    sub.add_parser("resume", help="lift all halts")
+    sub.add_parser("report", help="performance report for every account")
+    sub.add_parser("evaluate", help="Phase 5 go-live scorecard")
     once = sub.add_parser("once", help="run one decision cycle for each model's paper account")
     once.add_argument(
         "--model",
@@ -253,7 +266,7 @@ async def run_service(config: AppConfig, mode: Mode) -> int:
         return EXIT_CONFIG_ERROR
 
     bot: TelegramBot | None = None
-    alerter: Alerter = LogAlerter()
+    sinks: list[Alerter] = [LogAlerter(), DbAlerter(repo)]  # log + database, always
     service: TradingService | None = None
     if env.telegram_bot_token and env.telegram_chat_id:
         chat_id = int(env.telegram_chat_id)
@@ -268,12 +281,16 @@ async def run_service(config: AppConfig, mode: Mode) -> int:
             chat_id, {n: functools.partial(dispatch, n) for n in TradingService.COMMANDS}
         )
         bot = TelegramBot(env.telegram_bot_token.get_secret_value(), router)
-        alerter = TelegramAlerter(bot.bot, chat_id)
+        sinks.append(TelegramAlerter(bot.bot, chat_id))
     else:
-        log.warning("Telegram not configured: alerts go to the log only and /stop is unavailable")
+        log.info(
+            "Telegram not configured (optional): alerts go to the log and the database; "
+            "use `ai-trader status` / `stop` / `resume` on this machine"
+        )
+    alerter = MultiAlerter(sinks)
     heartbeat = Heartbeat(env.healthcheck_url.get_secret_value() if env.healthcheck_url else None)
     if not heartbeat.enabled:
-        log.warning("HEALTHCHECK_URL not set: no external heartbeat")
+        log.info("HEALTHCHECK_URL not set (optional): no external heartbeat")
 
     risk = RiskManager(trading.risk, trading.pairs, trading.paper.taker_fee_pct)
     cycle = DecisionCycle(trading, repo, market, risk, alerter)
@@ -284,9 +301,14 @@ async def run_service(config: AppConfig, mode: Mode) -> int:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop_event.set)
 
+    # Checked before the first cycle records a decision under the new configuration.
+    changed = config_change_notice(trading, repo)
+
     try:
         if bot is not None:
             await bot.start()
+        if changed:
+            await alerter.send(changed, AlertLevel.WARNING)
         service.schedule(run_cycle_now=True)
         service.scheduler.start()
         halts = repo.active_halts(None, utcnow())
@@ -304,6 +326,23 @@ async def run_service(config: AppConfig, mode: Mode) -> int:
             await bot.stop()
         await market.close()
     return EXIT_OK
+
+
+async def run_control(config: AppConfig, args: argparse.Namespace) -> str:
+    """Local control commands; safe to run while the bot is running."""
+    repo = Repository.from_url(config.env.database_url)
+    now = utcnow()
+    if args.command == "resume":
+        return control.resume(repo, now)
+    async with MarketData() as market:
+        accounts = build_paper_accounts(config, repo, market)
+        if args.command == "stop":
+            return await control.stop(repo, accounts, args.reason, now)
+        if args.command == "report":
+            return await control.report_text(config, repo, accounts, now)
+        if args.command == "evaluate":
+            return await control.evaluate_text(config, repo, accounts, now)
+        return await control.status_text(config, repo, accounts, now)
 
 
 async def load_backtest_data(config: AppConfig, candles_dir: Path, refresh: bool):
@@ -434,6 +473,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run":
         return asyncio.run(run_service(config, mode))
+
+    if args.command in ("status", "stop", "resume", "report", "evaluate"):
+        print(asyncio.run(run_control(config, args)))
+        return EXIT_OK
 
     if args.command == "backtest":
         reports = asyncio.run(run_backtest(config, args))

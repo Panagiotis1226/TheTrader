@@ -412,3 +412,10 @@ Recorded so later phases (and later sessions) build on what exists, not just the
   commands are processed after a restart (a `/stop` sent while it was down still applies);
   the Claude Code subprocess gets an allowlisted environment (no other secrets); the
   dashboard container gets no secrets at all.
+- **Phase 5 tooling:** local control (`ai-trader status/stop/resume/report/evaluate`) through
+  the shared database, so Telegram is optional; every alert is stored in an `alerts` table.
+  The evaluation window starts at the evaluated model's first real answer under the current
+  configuration fingerprint (prompt + risk + fees + pairs + interval) and restarts when it
+  changes. Go-live thresholds live in `settings.yaml` (`evaluation:`): 8 weeks, 50 trades,
+  "matches buy-and-hold" = within 1 point with ≥25% lower max drawdown. Criteria 3 (bugs)
+  and 4 (cost) need the owner's judgement; going live is never automatic.

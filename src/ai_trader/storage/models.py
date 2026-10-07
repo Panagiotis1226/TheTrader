@@ -150,3 +150,15 @@ class HaltRow(Base):
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     until: Mapped[datetime | None] = mapped_column(UTCDateTime)  # NULL = until /resume
     resumed_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+
+class AlertRow(Base):
+    """Every alert the bot raised, so they can be read on the machine (CLI, dashboard)."""
+
+    __tablename__ = "alerts"
+    __table_args__ = (Index("ix_alerts_created", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime)
+    level: Mapped[str] = mapped_column(String(16))
+    text: Mapped[str] = mapped_column(Text)
