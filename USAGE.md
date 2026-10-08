@@ -28,10 +28,10 @@ Then, in the project folder on the machine that will run the bot:
 ```bash
 cp .env.example .env
 # edit .env: paste the token after CLAUDE_CODE_OAUTH_TOKEN=   (leave MODE=paper)
-mkdir -p data
 ```
 
-On Linux, also run `sudo chown 1000:1000 data` (the container's user).
+The database lives in a Docker volume (`trader-data`), not in a folder of the project, so
+there is nothing else to create. Backups: `DEPLOY.md` §10.
 
 ## 3. Start and stop the bot
 
@@ -113,13 +113,15 @@ Without them, nothing is lost: alerts are kept in the database and the log.
 
 ## 9. Troubleshooting
 
-- **`disk I/O error` from SQLite at startup** (Docker Desktop on Mac/Windows, versions before
-  this fix): stop the bot, delete the database files, update, and start again:
+- **`disk I/O error` from SQLite at startup**: older versions kept the database in the
+  project's `data/` folder, and SQLite can't lock files there when that folder is on a
+  network drive (NFS/SMB home directories), shared into Docker Desktop, or used by rootless
+  Docker. Current versions use a Docker volume instead. Update and start again:
   ```bash
   docker compose down
-  rm -f data/trader.db data/trader.db-wal data/trader.db-shm      # Windows: del data\trader.db*
   git pull && docker compose up -d --build
   ```
+  The old `data/` folder is no longer used; delete it if it only holds the failed database.
 - **`Not logged in` in `status`**: the token in `.env` is missing or mistyped
   (`CLAUDE_CODE_OAUTH_TOKEN=...` on one line, no quotes). After fixing `.env`, run
   `docker compose up -d` again so the bot picks it up.

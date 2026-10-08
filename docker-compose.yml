@@ -6,7 +6,7 @@ services:
     restart: always
     env_file: .env            # secrets: never baked into the image
     volumes:
-      - ./data:/app/data      # SQLite DB, candle cache, backtests (back this up)
+      - trader-data:/app/data # SQLite DB, candle cache, backtests (back this up: DEPLOY.md §10)
       - ./config:/app/config:ro
     stop_grace_period: 30s
     logging:
@@ -31,8 +31,16 @@ services:
     ports:
       - "127.0.0.1:8501:8501"   # localhost only: use an SSH tunnel, never expose it
     volumes:
-      - ./data:/app/data
+      - trader-data:/app/data
       - ./config:/app/config:ro
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
+
+# A Docker-managed volume, not a host folder: SQLite needs working file locks, which
+# network drives (NFS/SMB home directories), Docker Desktop file sharing and some
+# rootless setups don't provide ("disk I/O error"). A new volume also starts owned by
+# the container's user, so no chown is needed. `docker compose down` keeps it;
+# only `docker compose down -v` deletes it.
+volumes:
+  trader-data:

@@ -5,6 +5,7 @@
 
 # Runtime state (SQLite DB, logs, caches)
 /data/
+/backups/
 
 # Python
 __pycache__/

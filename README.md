@@ -189,6 +189,8 @@ decisions after the 50-day warm-up). The cache in `data/candles/` is merged on e
 `--refresh-data`, so it grows over time. For full history, download Kraken's
 [OHLCVT files](https://support.kraken.com/articles/360047124832-downloadable-historical-ohlcvt-open-high-low-close-volume-trades-data)
 and copy the daily file (e.g. `XBTCAD_1440.csv`) to `data/candles/BTC_CAD_1d.csv`; it is read as is.
+With Docker, `data/` is the `trader-data` volume:
+`docker compose exec -T bot sh -c 'mkdir -p data/candles && cat > data/candles/BTC_CAD_1d.csv' < XBTCAD_1440.csv`.
 
 ## Risk rules
 

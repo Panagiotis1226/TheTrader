@@ -42,12 +42,15 @@ docker run --rm hello-world
 sudo systemctl enable docker        # start Docker (and the bot) after a reboot
 ```
 
-## 4. Code and data directory
+## 4. Code
 
 ```bash
 cd ~ && git clone https://github.com/Panagiotis1226/TheTrader.git && cd TheTrader
-mkdir -p data && sudo chown 1000:1000 data     # the container runs as uid 1000
 ```
+
+Data (database, candle cache, backtests) goes to the Docker volume `trader-data`, created on
+first start and owned by the container's user. `docker compose down` keeps it;
+`docker compose down -v` deletes it, and with it the whole trading history.
 
 ## 5. `.env` (secrets)
 
@@ -138,18 +141,30 @@ from scratch (`docker compose build --no-cache`); pin a version with
 
 ## 10. Backups
 
-Everything that matters is in `data/trader.db` (plus your `.env`). SQLite must be backed up
-with its online backup command, not by copying the file while the bot writes to it.
+Everything that matters is in `/app/data/trader.db` inside the `trader-data` volume (plus
+your `.env`). SQLite must be backed up with its online backup command, not by copying the
+file while the bot writes to it. This takes a consistent copy inside the container and
+streams it out to `backups/` in the project folder:
 
-Daily at 03:00, keeping 30 days (`crontab -e` on the server):
-
-```cron
-0 3 * * * cd /home/trader/TheTrader && docker compose exec -T bot sh -c 'mkdir -p /app/data/backups && sqlite3 /app/data/trader.db ".backup /app/data/backups/trader-$(date +\%F).db"' && find data/backups -name 'trader-*.db' -mtime +30 -delete
+```bash
+mkdir -p backups
+docker compose exec -T bot sh -c 'sqlite3 /app/data/trader.db ".backup /tmp/backup.db" && cat /tmp/backup.db && rm /tmp/backup.db' > backups/trader-$(date +%F).db
 ```
 
-Copy `data/backups/` off the server regularly (e.g. `rsync` or `scp` to your computer, or
+Daily at 03:00, keeping 30 days (`crontab -e` on the server; `%` must be escaped in cron):
+
+```cron
+0 3 * * * cd /home/trader/TheTrader && mkdir -p backups && docker compose exec -T bot sh -c 'sqlite3 /app/data/trader.db ".backup /tmp/backup.db" && cat /tmp/backup.db && rm /tmp/backup.db' > backups/trader-$(date +\%F).db && find backups -name 'trader-*.db' -mtime +30 -delete
+```
+
+Copy `backups/` off the server regularly (e.g. `rsync` or `scp` to your computer, or
 `rclone` to cloud storage). Keep a copy of `.env` somewhere safe and private (a password
 manager), never in git.
 
-**Restore:** `docker compose stop bot`, copy the backup to `data/trader.db`
-(`sudo chown 1000:1000 data/trader.db`), `docker compose start bot`.
+**Restore:** stream the backup into the volume while the bot is stopped, then start it:
+
+```bash
+docker compose stop bot
+docker compose run --rm -T --no-deps bot sh -c 'cat > /app/data/trader.db && rm -f /app/data/trader.db-journal' < backups/trader-YYYY-MM-DD.db
+docker compose start bot
+```

@@ -120,3 +120,15 @@ def test_bot_dashboard_and_cli_share_the_database(tmp_path) -> None:
         t.join()
     assert errors == []
     assert len(reader.equity_series("a")) == 200
+
+
+def test_compose_keeps_the_database_in_a_docker_volume() -> None:
+    """A host folder breaks SQLite locking on network drives and Docker Desktop shares."""
+    import yaml
+
+    from .conftest import REPO_ROOT
+
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    for name in ("bot", "dashboard"):
+        mounts = {v.split(":")[1]: v.split(":")[0] for v in compose["services"][name]["volumes"]}
+        assert mounts["/app/data"] in compose["volumes"], f"{name}: /app/data is a host folder"

@@ -3,6 +3,7 @@
 .venv
 venv
 data
+backups
 .env
 .env.*
 **/__pycache__
